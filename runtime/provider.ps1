@@ -101,10 +101,17 @@ $stderrText = $process.StandardError.ReadToEnd()
 $process.WaitForExit()
 
 if ($stdoutText) {
-  [Console]::Out.Write($stdoutText)
+  $stdoutBytes = [System.Text.Encoding]::UTF8.GetBytes($stdoutText)
+  [Console]::OpenStandardOutput().Write($stdoutBytes, 0, $stdoutBytes.Length)
 }
 Set-Content -Path $nodeStderrLog -Value $stderrText -Encoding UTF8
 
+Write-PluginLog "stdout_chars=$($stdoutText.Length)"
+Write-PluginLog "stdout_begin"
+if ($stdoutText) {
+  Add-Content -Path $logFile -Value $stdoutText -Encoding UTF8
+}
+Write-PluginLog "stdout_end"
 Write-PluginLog "node_exit_code=$($process.ExitCode)"
 Write-PluginLog "node_stderr_log=$nodeStderrLog"
 Write-PluginLog "node_stderr_begin"
