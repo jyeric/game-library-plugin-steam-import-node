@@ -1,0 +1,79 @@
+{
+  "id": "community.steam_import_node",
+  "name": "Steam Import Node Provider",
+  "version": "0.1.0",
+  "author": "Game Library Client Community",
+  "description": "JSON-RPC provider that scans installed Steam libraries and launches games through steam://rungameid URLs.",
+  "entryKind": "json-rpc",
+  "runtimeEntry": "runtime/provider.cmd",
+  "permissions": [
+    "games-read",
+    "launch-url"
+  ],
+  "allowedPaths": [
+    "<PLUGIN_ROOT>"
+  ],
+  "hostApis": [
+    "imports.acceptLibraries",
+    "imports.acceptCandidates",
+    "launch.acceptResolution",
+    "launch.acceptRequest"
+  ],
+  "runtimeActions": [
+    {
+      "id": "detect-libraries",
+      "name": "Detect Steam libraries",
+      "hostApi": "imports.acceptLibraries"
+    },
+    {
+      "id": "read-candidates",
+      "name": "Read Steam import candidates",
+      "hostApi": "imports.acceptCandidates"
+    },
+    {
+      "id": "resolve-launch",
+      "name": "Resolve Steam URL launch",
+      "hostApi": "launch.acceptResolution"
+    },
+    {
+      "id": "request-launch",
+      "name": "Request Steam URL launch",
+      "hostApi": "launch.acceptRequest"
+    }
+  ],
+  "providers": [
+    {
+      "id": "community.steam_import_node:import",
+      "name": "Steam Import",
+      "source": "plugin",
+      "status": "enabled",
+      "capabilities": [
+        "import"
+      ],
+      "permissions": [
+        "games-read"
+      ],
+      "runtimeActions": {
+        "imports.detectLibraries": "detect-libraries",
+        "imports.readCandidates": "read-candidates"
+      }
+    },
+    {
+      "id": "community.steam_import_node:launch",
+      "name": "Steam URL Launch",
+      "source": "plugin",
+      "status": "enabled",
+      "capabilities": [
+        "launch"
+      ],
+      "permissions": [
+        "launch-url"
+      ],
+      "runtimeActions": {
+        "launch.resolveProvider": "resolve-launch",
+        "launch.requestProvider": "request-launch"
+      }
+    }
+  ]
+}
+

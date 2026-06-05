@@ -1,0 +1,14 @@
+{
+  "name": "game-library-plugin-steam-import-node",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "JSON-RPC Steam import and launch provider for Game Library Client.",
+  "scripts": {
+    "test": "node --test tests"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
