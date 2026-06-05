@@ -35,6 +35,16 @@ npm test
 
 The tests use fixtures under `tests/fixtures/Steam` and do not scan your real Steam library.
 
+## Runtime Log
+
+Every runtime execution overwrites:
+
+```text
+runtime/logs/last-run.log
+```
+
+If Game Library Client reports a JSON-RPC runtime failure, open this log first. It records the wrapper working directory, selected Node executable, missing path checks, Node exit code, runtime action id, host API, and JavaScript stack traces. The log is ignored by git.
+
 ## Runtime Requirement
 
 This plugin runs on Node.js 20 or newer. When Game Library Client is launched from Explorer, it may not inherit the same `PATH` that your terminal sees.

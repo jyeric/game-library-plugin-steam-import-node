@@ -5,4 +5,5 @@ coverage/
 manifest.local.json
 runtime/node.exe
 runtime/node/
+runtime/logs/
 tmp/
