@@ -1,6 +1,22 @@
 $ErrorActionPreference = "Stop"
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptDir = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+  $scriptPath = $PSCommandPath
+  if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+    $scriptPath = $MyInvocation.MyCommand.Path
+  }
+  if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+    $scriptPath = $MyInvocation.InvocationName
+  }
+  if (-not [string]::IsNullOrWhiteSpace($scriptPath)) {
+    $scriptDir = Split-Path -LiteralPath $scriptPath -Parent
+  }
+}
+if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+  $scriptDir = (Get-Location).Path
+}
+
 $logDir = Join-Path $scriptDir "logs"
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $logFile = Join-Path $logDir "last-run.log"
