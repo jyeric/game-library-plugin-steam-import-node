@@ -35,6 +35,20 @@ npm test
 
 The tests use fixtures under `tests/fixtures/Steam` and do not scan your real Steam library.
 
+## Runtime Requirement
+
+This plugin runs on Node.js 20 or newer. When Game Library Client is launched from Explorer, it may not inherit the same `PATH` that your terminal sees. If the app reports that the JSON-RPC runtime cannot find a path or command, set `GAME_LIBRARY_NODE` to the full `node.exe` path and restart the app:
+
+```powershell
+[Environment]::SetEnvironmentVariable("GAME_LIBRARY_NODE", "C:\path\to\node.exe", "User")
+```
+
+You can find your current Node path from a terminal with:
+
+```powershell
+(Get-Command node).Source
+```
+
 ## Create a Local Manifest
 
 The manifest template uses `<PLUGIN_ROOT>` because Game Library Client requires plugin runtime paths to stay inside an allowed root.
