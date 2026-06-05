@@ -2,6 +2,14 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
+set "NODE_EXE=%SCRIPT_DIR%node.exe"
+
+if exist "%NODE_EXE%" goto run
+
+set "NODE_EXE=%SCRIPT_DIR%node\node.exe"
+
+if exist "%NODE_EXE%" goto run
+
 set "NODE_EXE=%GAME_LIBRARY_NODE%"
 
 if not "%NODE_EXE%"=="" (
@@ -15,7 +23,7 @@ for /f "delims=" %%I in ('where node 2^>nul') do (
   goto run
 )
 
-echo Node.js was not found for Steam Import Node Provider. Install Node.js 20+ or set GAME_LIBRARY_NODE to the full node.exe path. 1>&2
+echo Node.js was not found for Steam Import Node Provider. Copy node.exe to runtime\node.exe, install Node.js 20+, or set GAME_LIBRARY_NODE to the full node.exe path. 1>&2
 exit /b 1
 
 :run

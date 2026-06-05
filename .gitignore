@@ -3,5 +3,6 @@ coverage/
 .env
 *.log
 manifest.local.json
+runtime/node.exe
+runtime/node/
 tmp/
-

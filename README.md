@@ -37,7 +37,15 @@ The tests use fixtures under `tests/fixtures/Steam` and do not scan your real St
 
 ## Runtime Requirement
 
-This plugin runs on Node.js 20 or newer. When Game Library Client is launched from Explorer, it may not inherit the same `PATH` that your terminal sees. If the app reports that the JSON-RPC runtime cannot find a path or command, set `GAME_LIBRARY_NODE` to the full `node.exe` path and restart the app:
+This plugin runs on Node.js 20 or newer. When Game Library Client is launched from Explorer, it may not inherit the same `PATH` that your terminal sees.
+
+The most reliable local setup is to copy your current `node.exe` next to the runtime wrapper. The copied executable is ignored by git:
+
+```powershell
+Copy-Item (Get-Command node).Source .\runtime\node.exe
+```
+
+Alternatively, set `GAME_LIBRARY_NODE` to the full `node.exe` path and restart the app:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("GAME_LIBRARY_NODE", "C:\path\to\node.exe", "User")
