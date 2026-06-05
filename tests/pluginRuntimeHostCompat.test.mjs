@@ -23,7 +23,7 @@ describe("PowerShell JSON-RPC runtime host compatibility", { skip: process.platf
     assert.equal(response.result.hostApi, "imports.acceptLibraries");
     assert.equal(response.result.payload.providerId, "community.steam_import_node:import");
     assert.equal(response.result.payload.libraries.length, 1);
-    assert.equal(response.result.payload.libraries[0].manifestCount, 1);
+    assert.equal(response.result.payload.libraries[0].manifestCount, 2);
   });
 
   it("returns parseable JSON for read-candidates with a normal path", () => {
@@ -36,8 +36,11 @@ describe("PowerShell JSON-RPC runtime host compatibility", { skip: process.platf
     });
 
     assert.equal(response.result.hostApi, "imports.acceptCandidates");
-    assert.equal(response.result.payload.candidates.length, 1);
-    assert.equal(response.result.payload.candidates[0].externalIds.steam, "730");
+    assert.equal(response.result.payload.candidates.length, 2);
+    assert.equal(
+      response.result.payload.candidates.find((candidate) => candidate.externalIds.steam === "2403320").title,
+      "冬日树下的回忆",
+    );
   });
 
   it("returns parseable JSON for read-candidates with a Windows long path prefix", () => {
@@ -51,8 +54,11 @@ describe("PowerShell JSON-RPC runtime host compatibility", { skip: process.platf
     });
 
     assert.equal(response.result.hostApi, "imports.acceptCandidates");
-    assert.equal(response.result.payload.candidates.length, 1);
-    assert.match(response.result.payload.candidates[0].path, /^\\\\\?\\/);
+    assert.equal(response.result.payload.candidates.length, 2);
+    assert.match(
+      response.result.payload.candidates.find((candidate) => candidate.externalIds.steam === "2403320").path,
+      /^\\\\\?\\/,
+    );
   });
 
   it("returns parseable JSON for launch resolution and launch requests", () => {

@@ -59,11 +59,13 @@ describe("Steam installed game scan", () => {
     });
 
     assert.deepEqual(errors, []);
-    assert.equal(games.length, 1);
-    assert.equal(games[0].appid, "730");
-    assert.equal(games[0].name, "Counter-Strike 2");
-    assert.equal(games[0].launchUrl, "steam://rungameid/730");
-    assert.equal(games[0].installPath, path.join(fixtureSteamRoot, "steamapps", "common", "Counter-Strike"));
+    assert.equal(games.length, 2);
+    const counterStrike = games.find((game) => game.appid === "730");
+    const winterMemories = games.find((game) => game.appid === "2403320");
+    assert.equal(counterStrike.name, "Counter-Strike 2");
+    assert.equal(counterStrike.launchUrl, "steam://rungameid/730");
+    assert.equal(counterStrike.installPath, path.join(fixtureSteamRoot, "steamapps", "common", "Counter-Strike"));
+    assert.equal(winterMemories.name, "冬日树下的回忆");
   });
 
   it("maps scanned games into import candidates", () => {
@@ -71,7 +73,7 @@ describe("Steam installed game scan", () => {
       env: { STEAM_ROOT: fixtureSteamRoot },
       platform: process.platform,
     });
-    const candidate = steamGameToImportCandidate(games[0]);
+    const candidate = steamGameToImportCandidate(games.find((game) => game.appid === "730"));
 
     assert.equal(candidate.id, "steam-730");
     assert.equal(candidate.title, "Counter-Strike 2");
@@ -91,7 +93,7 @@ describe("JSON-RPC action handling", () => {
       assert.equal(result.result.hostApi, "imports.acceptLibraries");
       assert.equal(result.result.payload.providerId, IMPORT_PROVIDER_ID);
       assert.equal(result.result.payload.libraries.length, 1);
-      assert.equal(result.result.payload.libraries[0].manifestCount, 1);
+      assert.equal(result.result.payload.libraries[0].manifestCount, 2);
     } finally {
       restoreEnv("STEAM_ROOT", previousRoot);
     }
@@ -105,8 +107,9 @@ describe("JSON-RPC action handling", () => {
 
     assert.equal(result.result.hostApi, "imports.acceptCandidates");
     assert.equal(result.result.payload.providerId, IMPORT_PROVIDER_ID);
-    assert.equal(result.result.payload.candidates.length, 1);
-    assert.equal(result.result.payload.candidates[0].externalIds.steam, "730");
+    assert.equal(result.result.payload.candidates.length, 2);
+    assert.equal(result.result.payload.candidates.find((candidate) => candidate.externalIds.steam === "730").title, "Counter-Strike 2");
+    assert.equal(result.result.payload.candidates.find((candidate) => candidate.externalIds.steam === "2403320").title, "冬日树下的回忆");
   });
 
   it("resolves and requests Steam URL launches", () => {
@@ -140,4 +143,3 @@ function restoreEnv(key, value) {
     process.env[key] = value;
   }
 }
-

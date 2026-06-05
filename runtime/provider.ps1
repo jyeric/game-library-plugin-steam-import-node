@@ -24,6 +24,8 @@ $logDir = [System.IO.Path]::Combine($scriptDir, "logs")
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 $logFile = [System.IO.Path]::Combine($logDir, "last-run.log")
 $nodeStderrLog = [System.IO.Path]::Combine($logDir, "node-stderr.log")
+$requestFile = [System.IO.Path]::Combine($logDir, "request.json")
+$responseFile = [System.IO.Path]::Combine($logDir, "response.json")
 
 function Write-PluginLog {
   param([string] $Message)
@@ -82,6 +84,10 @@ Write-PluginLog "command=`"$nodeExe`" `"$providerPath`""
 $env:STEAM_IMPORT_PLUGIN_LOG = $logFile
 $stdinText = [Console]::In.ReadToEnd()
 Write-PluginLog "stdin_chars=$($stdinText.Length)"
+[System.IO.File]::WriteAllText($requestFile, $stdinText, [System.Text.UTF8Encoding]::new($false))
+if (Test-Path -LiteralPath $responseFile) {
+  Remove-Item -LiteralPath $responseFile -Force
+}
 
 $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
 $startInfo.FileName = $nodeExe
@@ -93,16 +99,20 @@ $startInfo.RedirectStandardOutput = $true
 $startInfo.RedirectStandardError = $true
 $process = [System.Diagnostics.Process]::new()
 $process.StartInfo = $startInfo
+$env:STEAM_IMPORT_PLUGIN_STDIN_FILE = $requestFile
+$env:STEAM_IMPORT_PLUGIN_STDOUT_FILE = $responseFile
 [void] $process.Start()
-$process.StandardInput.Write($stdinText)
 $process.StandardInput.Close()
-$stdoutText = $process.StandardOutput.ReadToEnd()
+$process.StandardOutput.ReadToEnd() | Out-Null
 $stderrText = $process.StandardError.ReadToEnd()
 $process.WaitForExit()
 
-if ($stdoutText) {
-  $stdoutBytes = [System.Text.Encoding]::UTF8.GetBytes($stdoutText)
+if (Test-Path -LiteralPath $responseFile) {
+  $stdoutBytes = [System.IO.File]::ReadAllBytes($responseFile)
   [Console]::OpenStandardOutput().Write($stdoutBytes, 0, $stdoutBytes.Length)
+  $stdoutText = [System.Text.Encoding]::UTF8.GetString($stdoutBytes)
+} else {
+  $stdoutText = ""
 }
 Set-Content -Path $nodeStderrLog -Value $stderrText -Encoding UTF8
 
