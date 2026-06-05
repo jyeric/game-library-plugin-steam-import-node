@@ -17,7 +17,8 @@ The plugin is intentionally small and dependency-free. It is a working example o
 
 ```text
 runtime/
-  provider.cmd        Windows JSON-RPC runtime wrapper.
+  provider.ps1        Windows JSON-RPC runtime wrapper used by the manifest.
+  provider.cmd        Fallback wrapper for manual debugging.
   provider.mjs        stdin/stdout entrypoint.
 src/
   jsonrpc/            JSON-RPC action routing.
