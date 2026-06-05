@@ -14,13 +14,16 @@ if ([string]::IsNullOrWhiteSpace($scriptDir)) {
   }
 }
 if ([string]::IsNullOrWhiteSpace($scriptDir)) {
-  $scriptDir = (Get-Location).Path
+  $scriptDir = (Get-Location).ProviderPath
+}
+if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+  $scriptDir = "."
 }
 
-$logDir = Join-Path $scriptDir "logs"
+$logDir = [System.IO.Path]::Combine($scriptDir, "logs")
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-$logFile = Join-Path $logDir "last-run.log"
-$nodeStderrLog = Join-Path $logDir "node-stderr.log"
+$logFile = [System.IO.Path]::Combine($logDir, "last-run.log")
+$nodeStderrLog = [System.IO.Path]::Combine($logDir, "node-stderr.log")
 
 function Write-PluginLog {
   param([string] $Message)
@@ -30,9 +33,9 @@ function Write-PluginLog {
 Set-Content -Path $logFile -Value "Steam Import Node Provider PowerShell runtime start" -Encoding UTF8
 Set-Content -Path $nodeStderrLog -Value "" -Encoding UTF8
 
-$providerPath = Join-Path $scriptDir "provider.mjs"
-$bundledNode = Join-Path $scriptDir "node.exe"
-$bundledNodeDir = Join-Path (Join-Path $scriptDir "node") "node.exe"
+$providerPath = [System.IO.Path]::Combine($scriptDir, "provider.mjs")
+$bundledNode = [System.IO.Path]::Combine($scriptDir, "node.exe")
+$bundledNodeDir = [System.IO.Path]::Combine([System.IO.Path]::Combine($scriptDir, "node"), "node.exe")
 
 Write-PluginLog "script_dir=$scriptDir"
 Write-PluginLog "working_dir=$(Get-Location)"
