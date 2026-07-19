@@ -12,7 +12,7 @@ The plugin is intentionally small and npm dependency-free. It is a working examp
 - Return installed Steam games through `imports.acceptCandidates`.
 - Open a reviewed Steam browser login command and save Steam store cookies under the plugin data dir.
 - Refresh the Steam store `webapi_token` from `https://store.steampowered.com/pointssummary/ajaxgetasyncconfig`.
-- Return Steam account-library and family-shared games through `accounts.acceptCandidates` without requiring a Steam Web API key.
+- Return Steam account-library and family-shared games through `accounts.acceptCandidates` without requiring a Steam Web API key. These candidates contribute `steam://install/{appid}` acquisition routes but no launch options; launch options remain owned by the client's built-in installed-Steam import.
 - Resolve and request launch through `launch.acceptRequest` with a Steam URL.
 - Avoid hardcoded drive scanning. macOS and Linux auto-detection currently report unsupported unless `STEAM_ROOT` is provided.
 

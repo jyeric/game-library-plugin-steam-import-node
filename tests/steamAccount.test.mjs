@@ -338,6 +338,7 @@ describe("Steam account and family library import", () => {
     assert.match(shared.description, /family-shared/);
     assert.equal(shared.path, "steam://install/30");
     assert.equal(shared.executable, "steam://install/30");
+    assert.deepEqual(shared.networkManifest.launchOptions, []);
     assert.deepEqual(shared.externalIdProvenance.steam.ownerSteamIds, ["76561198000000003"]);
   });
 });

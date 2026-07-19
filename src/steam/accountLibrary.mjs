@@ -1,5 +1,4 @@
 import { clearTokenCache, getStoreAccessToken, isSteamLoginRequiredError } from "./accessToken.mjs";
-import { steamLaunchUrl } from "./scanInstalledGames.mjs";
 
 export const PLUGIN_ID = "community.steam_import_node";
 export const IMPORT_PROVIDER_ID = `${PLUGIN_ID}:import`;
@@ -231,15 +230,7 @@ export function steamAccountGameToImportCandidate(game) {
       },
       downloads: [],
       acquisitionPlans: [],
-      launchOptions: [
-        {
-          id: `steam-run-${appid}`,
-          label: `Launch ${title} with Steam`,
-          kind: "url",
-          providerId: LAUNCH_PROVIDER_ID,
-          value: steamLaunchUrl(appid),
-        },
-      ],
+      launchOptions: [],
       saveProfileHints: [],
     },
   };
