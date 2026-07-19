@@ -14,7 +14,7 @@
     "http-allowed-domains"
   ],
   "allowedPaths": [
-    "<PLUGIN_ROOT>",
+    "<PLUGIN_INSTALL_ROOT>",
     "<PLUGIN_DATA_DIR>"
   ],
   "allowedDomains": [
@@ -60,7 +60,7 @@
       "id": "steam-auth",
       "name": "Steam browser login",
       "executablePath": "<NODE_EXE>",
-      "workingDirectory": "<PLUGIN_ROOT>",
+      "workingDirectory": "<PLUGIN_INSTALL_ROOT>",
       "commandPreview": [
         "src/auth/steam-auth.mjs",
         "auth",

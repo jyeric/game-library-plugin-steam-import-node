@@ -1,11 +1,12 @@
 {
   "name": "game-library-plugin-steam-import-node",
-  "version": "0.1.8",
+  "version": "0.2.4",
   "private": true,
   "type": "module",
-  "description": "JSON-RPC Steam import and launch provider for Game Library Client.",
+  "description": "JSON-RPC Steam import, account-library, family-sharing, and launch provider for Game Library Client.",
   "scripts": {
-    "test": "node --test tests"
+    "package": "node scripts/build-package.mjs",
+    "test": "node --test tests/pluginRuntimeHostCompat.test.mjs tests/steamAccount.test.mjs tests/steamImport.test.mjs"
   },
   "engines": {
     "node": ">=20"

@@ -85,11 +85,11 @@ describe("Steam installed game scan", () => {
 });
 
 describe("JSON-RPC action handling", () => {
-  it("returns detected libraries for imports.acceptLibraries", () => {
+  it("returns detected libraries for imports.acceptLibraries", async () => {
     const previousRoot = process.env.STEAM_ROOT;
     process.env.STEAM_ROOT = fixtureSteamRoot;
     try {
-      const result = handleAction("request-1", { actionId: "detect-libraries", payload: {} });
+      const result = await handleAction("request-1", { actionId: "detect-libraries", payload: {} });
       assert.equal(result.result.hostApi, "imports.acceptLibraries");
       assert.equal(result.result.payload.providerId, IMPORT_PROVIDER_ID);
       assert.equal(result.result.payload.libraries.length, 1);
@@ -99,8 +99,8 @@ describe("JSON-RPC action handling", () => {
     }
   });
 
-  it("returns candidates for imports.acceptCandidates", () => {
-    const result = handleAction("request-2", {
+  it("returns candidates for imports.acceptCandidates", async () => {
+    const result = await handleAction("request-2", {
       actionId: "read-candidates",
       payload: { libraries: [{ path: fixtureSteamRoot }] },
     });
@@ -112,7 +112,7 @@ describe("JSON-RPC action handling", () => {
     assert.equal(result.result.payload.candidates.find((candidate) => candidate.externalIds.steam === "2403320").title, "冬日树下的回忆");
   });
 
-  it("resolves and requests Steam URL launches", () => {
+  it("resolves and requests Steam URL launches", async () => {
     const payload = {
       game: {
         id: "game-1",
@@ -124,12 +124,12 @@ describe("JSON-RPC action handling", () => {
       },
     };
 
-    const resolution = handleAction("request-3", { actionId: "resolve-launch", payload });
+    const resolution = await handleAction("request-3", { actionId: "resolve-launch", payload });
     assert.equal(resolution.result.hostApi, "launch.acceptResolution");
     assert.equal(resolution.result.payload.providerId, LAUNCH_PROVIDER_ID);
     assert.equal(resolution.result.payload.canHandle, true);
 
-    const launch = handleAction("request-4", { actionId: "request-launch", payload });
+    const launch = await handleAction("request-4", { actionId: "request-launch", payload });
     assert.equal(launch.result.hostApi, "launch.acceptRequest");
     assert.equal(launch.result.payload.providerId, LAUNCH_PROVIDER_ID);
     assert.equal(launch.result.payload.url, "steam://rungameid/730");

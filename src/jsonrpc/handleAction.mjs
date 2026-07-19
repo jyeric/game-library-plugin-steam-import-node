@@ -5,26 +5,41 @@ import {
   steamGameToImportCandidate,
   steamLaunchUrl,
 } from "../steam/scanInstalledGames.mjs";
+import {
+  ACCOUNT_PROVIDER_ID,
+  IMPORT_PROVIDER_ID,
+  LAUNCH_PROVIDER_ID,
+  readSteamAccountGames,
+} from "../steam/accountLibrary.mjs";
+import { isSteamLoginRequiredError } from "../steam/accessToken.mjs";
+import { steamSessionStatus } from "../steam/session.mjs";
 
-export const IMPORT_PROVIDER_ID = "community.steam_import_node:import";
-export const LAUNCH_PROVIDER_ID = "community.steam_import_node:launch";
+const LOGIN_REQUIRED_MESSAGE =
+  "Steam browser login is required. Confirm the Steam browser login command, complete login, then retry.";
+const LOGIN_COMPLETED_MESSAGE = "Steam browser login completed.";
 
-export function handleAction(id, params) {
+export async function handleAction(id, params) {
   try {
     switch (params?.actionId) {
+      case "login":
+        return await login(id, params?.payload ?? {});
+      case "account-status":
+        return accountStatus(id);
       case "detect-libraries":
-        return detectLibraries(id);
+        return await detectLibraries(id);
       case "read-candidates":
-        return readCandidates(id, params?.payload);
+        return await readCandidates(id, params?.payload);
+      case "read-account-candidates":
+        return await readAccountCandidates(id, params?.payload ?? {});
       case "resolve-launch":
-        return resolveLaunch(id, params?.payload);
+        return await resolveLaunch(id, params?.payload);
       case "request-launch":
-        return requestLaunch(id, params?.payload);
+        return await requestLaunch(id, params?.payload);
       default:
         return errorResponse(id, `unsupported action: ${params?.actionId ?? "unknown"}`);
     }
   } catch (error) {
-    return errorResponse(id, error instanceof Error ? error.message : String(error));
+    return errorResponse(id, errorMessage(error));
   }
 }
 
@@ -46,6 +61,41 @@ function readCandidates(id, payload) {
     providerId: IMPORT_PROVIDER_ID,
     candidates: games.map(steamGameToImportCandidate),
     warnings: errors,
+  });
+}
+
+async function readAccountCandidates(id, payload) {
+  try {
+    const { candidates, warnings } = await readSteamAccountGames(payload);
+    return response(id, "accounts.acceptCandidates", {
+      providerId: ACCOUNT_PROVIDER_ID,
+      candidates,
+      warnings,
+    });
+  } catch (error) {
+    if (isSteamLoginRequiredError(error)) {
+      return requestAuthCommand(id, ACCOUNT_PROVIDER_ID);
+    }
+    throw error;
+  }
+}
+
+function login(id, payload) {
+  if (hostResult(payload, "tools.requestReviewedCommand")) {
+    const status = steamSessionStatus();
+    return response(id, "accounts.acceptStatus", {
+      providerId: ACCOUNT_PROVIDER_ID,
+      ...status,
+      message: status.loggedIn ? LOGIN_COMPLETED_MESSAGE : status.message,
+    });
+  }
+  return requestAuthCommand(id, ACCOUNT_PROVIDER_ID);
+}
+
+function accountStatus(id) {
+  return response(id, "accounts.acceptStatus", {
+    providerId: ACCOUNT_PROVIDER_ID,
+    ...steamSessionStatus(),
   });
 }
 
@@ -99,3 +149,43 @@ function isSteamAppId(value) {
     : false;
 }
 
+function requestAuthCommand(id, providerId) {
+  return response(id, "tools.requestReviewedCommand", {
+    toolId: "steam-auth",
+    commandId: "auth",
+    providerId,
+    variables: {},
+    message: LOGIN_REQUIRED_MESSAGE,
+  });
+}
+
+function hostResult(payload, hostApi) {
+  const result = payload?.runtimeHostResult;
+  if (!result) {
+    return undefined;
+  }
+  if (hostApi && result.hostApi !== hostApi) {
+    return undefined;
+  }
+  return result.payload;
+}
+
+function errorMessage(error) {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+  const cause = error.cause;
+  if (cause && typeof cause === "object") {
+    const code = typeof cause.code === "string" ? cause.code : undefined;
+    const message = typeof cause.message === "string" ? cause.message : undefined;
+    if (code && message) {
+      return `${error.message}: ${code} ${message}`;
+    }
+    if (message) {
+      return `${error.message}: ${message}`;
+    }
+  }
+  return error.message;
+}
+
+export { ACCOUNT_PROVIDER_ID, IMPORT_PROVIDER_ID, LAUNCH_PROVIDER_ID };

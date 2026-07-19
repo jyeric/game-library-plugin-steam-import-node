@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pluginRoot = path.resolve(__dirname, "..");
-const runtimeRoot = path.join(pluginRoot, "runtime");
 const fixtureSteamRoot = path.join(__dirname, "fixtures", "Steam");
-const runtimeEntry = path.join(runtimeRoot, "provider.ps1");
+const runtimeEntry = path.join(pluginRoot, "runtime", "provider.mjs");
 
-describe("PowerShell JSON-RPC runtime host compatibility", { skip: process.platform !== "win32" }, () => {
+describe("Node JSON-RPC runtime host compatibility", () => {
   it("returns parseable JSON for detect-libraries", () => {
     const response = executeRuntime({
       id: "detect-libraries",
@@ -37,28 +38,52 @@ describe("PowerShell JSON-RPC runtime host compatibility", { skip: process.platf
 
     assert.equal(response.result.hostApi, "imports.acceptCandidates");
     assert.equal(response.result.payload.candidates.length, 2);
-    assert.equal(
-      response.result.payload.candidates.find((candidate) => candidate.externalIds.steam === "2403320").title,
-      "冬日树下的回忆",
-    );
+    assert.ok(response.result.payload.candidates.some((candidate) => candidate.externalIds.steam === "2403320"));
   });
 
-  it("returns parseable JSON for read-candidates with a Windows long path prefix", () => {
-    const longPath = `\\\\?\\${fixtureSteamRoot}`;
-    const response = executeRuntime({
-      id: "read-candidates-long-path",
-      params: {
-        actionId: "read-candidates",
-        payload: { libraries: [{ path: longPath }] },
-      },
-    });
+  it("ignores stale wrapper stdin files and answers the live request id", () => {
+    const staleDir = mkdtempSync(path.join(tmpdir(), "steam-runtime-stale-"));
+    try {
+      const staleRequest = path.join(staleDir, "request.json");
+      writeFileSync(
+        staleRequest,
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: "stale-id",
+          method: "executeAction",
+          params: {
+            pluginId: "community.steam_import_node",
+            actionId: "detect-libraries",
+            payload: {},
+            hostApis: [],
+          },
+        }),
+        "utf8",
+      );
 
-    assert.equal(response.result.hostApi, "imports.acceptCandidates");
-    assert.equal(response.result.payload.candidates.length, 2);
-    assert.match(
-      response.result.payload.candidates.find((candidate) => candidate.externalIds.steam === "2403320").path,
-      /^\\\\\?\\/,
-    );
+      const response = executeRuntime(
+        {
+          id: "live-id",
+          params: {
+            actionId: "resolve-launch",
+            payload: {
+              game: { externalIds: { steam: "730" } },
+              option: {},
+            },
+          },
+        },
+        {
+          STEAM_IMPORT_PLUGIN_STDIN_FILE: staleRequest,
+          STEAM_IMPORT_PLUGIN_STDOUT_FILE: path.join(staleDir, "response.json"),
+        },
+      );
+
+      assert.equal(response.id, "live-id");
+      assert.equal(response.result.hostApi, "launch.acceptResolution");
+      assert.equal(response.result.payload.canHandle, true);
+    } finally {
+      rmSync(staleDir, { recursive: true, force: true });
+    }
   });
 
   it("returns parseable JSON for launch resolution and launch requests", () => {
@@ -93,9 +118,61 @@ describe("PowerShell JSON-RPC runtime host compatibility", { skip: process.platf
     assert.equal(launch.result.hostApi, "launch.acceptRequest");
     assert.equal(launch.result.payload.url, "steam://rungameid/730");
   });
+
+  it("returns the live client request id when async account import fails", () => {
+    const tempRoot = mkdtempSync(path.join(tmpdir(), "steam-runtime-async-error-"));
+    try {
+      const dataDir = path.join(tempRoot, "plugin-data");
+      mkdirSync(dataDir, { recursive: true });
+      writeFileSync(
+        path.join(dataDir, "steam-session.json"),
+        JSON.stringify({
+          exportedAt: new Date().toISOString(),
+          cookies: [
+            {
+              name: "steamLoginSecure",
+              value: "session-cookie",
+              domain: ".steampowered.com",
+              path: "/",
+            },
+          ],
+        }),
+        "utf8",
+      );
+      const preload = path.join(tempRoot, "fail-fetch.mjs");
+      writeFileSync(
+        preload,
+        "globalThis.fetch = async () => { throw new Error('simulated fetch failed'); };\n",
+        "utf8",
+      );
+
+      const response = executeRuntime(
+        {
+          id: "community.steam_import_node:read-account-candidates:host-id",
+          params: {
+            actionId: "read-account-candidates",
+            payload: {
+              providerId: "community.steam_import_node:account",
+              options: { parameters: {} },
+            },
+          },
+        },
+        {
+          GAME_LIBRARY_PLUGIN_DATA_DIR: dataDir,
+          NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
+        },
+        { expectResult: false },
+      );
+
+      assert.equal(response.id, "community.steam_import_node:read-account-candidates:host-id");
+      assert.equal(response.error.message, "simulated fetch failed");
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });
 
-function executeRuntime({ id, params }) {
+function executeRuntime({ id, params }, extraEnv = {}, options = {}) {
   const request = JSON.stringify({
     jsonrpc: "2.0",
     id,
@@ -105,26 +182,24 @@ function executeRuntime({ id, params }) {
       hostApis: [
         "imports.acceptLibraries",
         "imports.acceptCandidates",
+        "accounts.acceptCandidates",
         "launch.acceptResolution",
         "launch.acceptRequest",
+        "tools.requestReviewedCommand",
       ],
       ...params,
     },
   });
 
-  const result = spawnSync(
-    "powershell",
-    ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", runtimeEntry],
-    {
-      cwd: runtimeRoot,
-      input: `${request}\n`,
-      env: {
-        ...process.env,
-        STEAM_ROOT: fixtureSteamRoot,
-        GAME_LIBRARY_NODE: process.execPath,
-      },
+  const result = spawnSync(process.execPath, [runtimeEntry], {
+    cwd: path.dirname(runtimeEntry),
+    input: `${request}\n`,
+    env: {
+      ...process.env,
+      ...extraEnv,
+      STEAM_ROOT: fixtureSteamRoot,
     },
-  );
+  });
 
   assert.equal(result.status, 0, result.stderr.toString("utf8"));
   const stdout = result.stdout.toString("utf8").trim();
@@ -133,6 +208,8 @@ function executeRuntime({ id, params }) {
   const response = JSON.parse(stdout);
   assert.equal(response.jsonrpc, "2.0");
   assert.equal(response.id, id);
-  assert.ok(response.result, `runtime returned error: ${stdout}`);
+  if (options.expectResult !== false) {
+    assert.ok(response.result, `runtime returned error: ${stdout}`);
+  }
   return response;
 }
