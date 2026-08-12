@@ -1,4 +1,5 @@
 import { clearTokenCache, getStoreAccessToken, isSteamLoginRequiredError } from "./accessToken.mjs";
+import { clearSteamLoginState } from "./session.mjs";
 
 export const PLUGIN_ID = "community.steam_import_node";
 export const IMPORT_PROVIDER_ID = `${PLUGIN_ID}:import`;
@@ -15,22 +16,26 @@ export async function readSteamAccountGames(payload = {}, options = {}) {
   const explicitSteamId = steamIdFromPayload(payload);
   const firstToken = await getStoreAccessToken({ dataDir, fetchImpl });
   try {
-    return await readSteamAccountGamesWithToken(firstToken, {
+    const result = await readSteamAccountGamesWithToken(firstToken, {
       fetchImpl,
       language,
       steamId: explicitSteamId ?? firstToken.steamId,
     });
+    clearSteamLoginState(dataDir);
+    return result;
   } catch (error) {
     if (!isUnauthorizedSteamApiError(error)) {
       throw error;
     }
     clearTokenCache(dataDir);
     const refreshed = await getStoreAccessToken({ dataDir, fetchImpl, forceRefresh: true });
-    return readSteamAccountGamesWithToken(refreshed, {
+    const result = await readSteamAccountGamesWithToken(refreshed, {
       fetchImpl,
       language,
       steamId: explicitSteamId ?? refreshed.steamId,
     });
+    clearSteamLoginState(dataDir);
+    return result;
   }
 }
 

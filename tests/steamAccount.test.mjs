@@ -4,11 +4,18 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import { hasLoginCookies } from "../src/auth/steam-auth.mjs";
 import { handleAction, ACCOUNT_PROVIDER_ID } from "../src/jsonrpc/handleAction.mjs";
 import { parseStoreWebApiToken, decodeSteamAccessToken, getStoreAccessToken } from "../src/steam/accessToken.mjs";
 import { readSteamAccountGames } from "../src/steam/accountLibrary.mjs";
 import { buildSteamStoreCookieHeader } from "../src/steam/cookies.mjs";
-import { sessionFilePath, steamSessionStatus, writeJsonPrivate } from "../src/steam/session.mjs";
+import {
+  beginSteamLogin,
+  completeSteamLogin,
+  sessionFilePath,
+  steamSessionStatus,
+  writeJsonPrivate,
+} from "../src/steam/session.mjs";
 
 const tempDirs = [];
 
@@ -85,6 +92,18 @@ describe("Steam store access tokens", () => {
     assert.match(header, /wide=wide-cookie/);
     assert.doesNotMatch(header, /steamRefresh_steam/);
   });
+
+  it("accepts only an unexpired Steam Store login cookie", () => {
+    assert.equal(hasLoginCookies([
+      { name: "steamLoginSecure", value: "community-only", domain: "steamcommunity.com" },
+    ]), false);
+    assert.equal(hasLoginCookies([
+      { name: "steamLoginSecure", value: "expired", domain: "store.steampowered.com", expires: 1 },
+    ]), false);
+    assert.equal(hasLoginCookies([
+      { name: "steamLoginSecure", value: "fresh", domain: ".steampowered.com", expires: 4_102_444_800 },
+    ]), true);
+  });
 });
 
 describe("Steam plugin manifest", () => {
@@ -93,7 +112,10 @@ describe("Steam plugin manifest", () => {
 
     assert.equal(manifest.logoPath, "logo.svg");
     assert.equal(manifest.providerFamilies, undefined);
+    assert.equal(manifest.dependencies.runnerVersion, "json-rpc-stdio-v2");
     assert.equal(manifest.hostApis.includes("tools.requestReviewedCommand"), true);
+    assert.equal(manifest.hostApis.includes("http.fetchAllowed"), true);
+    assert.equal(manifest.permissions.includes("http-cookie-session"), true);
     assert.equal(manifest.dependencies.runtimes[0].versionRequirement, ">=20 <25");
     assert.equal(
       manifest.dependencies.runtimes[0].install.url,
@@ -119,6 +141,10 @@ describe("Steam plugin manifest", () => {
     assert.equal(
       manifest.runtimeActions.find((action) => action.id === "read-account-candidates")?.hostApi,
       "accounts.acceptCandidates",
+    );
+    assert.deepEqual(
+      manifest.runtimeActions.find((action) => action.id === "read-account-candidates")?.intermediateHostApis,
+      ["http.fetchAllowed"],
     );
     assert.equal(manifest.hostApis.includes("accounts.acceptStatus"), true);
     assert.equal(
@@ -159,7 +185,7 @@ describe("Steam account session status", () => {
     }
   });
 
-  it("derives the SteamID from a saved login cookie and returns it after login", async () => {
+  it("keeps login pending until a newly captured session replaces the rejected one", async () => {
     const dataDir = tempDataDir();
     const previous = process.env.GAME_LIBRARY_PLUGIN_DATA_DIR;
     process.env.GAME_LIBRARY_PLUGIN_DATA_DIR = dataDir;
@@ -179,7 +205,28 @@ describe("Steam account session status", () => {
         accountId: "76561198000000001",
         message: "Steam browser session is ready.",
       });
-      const result = await handleAction("steam-login-complete", {
+      beginSteamLogin(dataDir);
+      assert.deepEqual(steamSessionStatus(dataDir), {
+        loggedIn: false,
+        pending: true,
+        message: "Waiting for Steam browser login to complete.",
+      });
+      completeSteamLogin(dataDir, {
+        exportedAt: new Date().toISOString(),
+        cookies: [{
+          name: "steamLoginSecure",
+          value: "76561198000000001%7C%7Cfresh-session-secret",
+          domain: "store.steampowered.com",
+          path: "/",
+          expires: Math.floor(Date.now() / 1000) + 3600,
+        }],
+      });
+      assert.deepEqual(steamSessionStatus(dataDir), {
+        loggedIn: true,
+        accountId: "76561198000000001",
+        message: "Steam browser session is ready.",
+      });
+      const result = await handleAction("steam-login-started", {
         actionId: "login",
         payload: {
           runtimeHostResult: {
@@ -192,9 +239,9 @@ describe("Steam account session status", () => {
         hostApi: "accounts.acceptStatus",
         payload: {
           providerId: ACCOUNT_PROVIDER_ID,
-          loggedIn: true,
-          accountId: "76561198000000001",
-          message: "Steam browser login completed.",
+          loggedIn: false,
+          pending: true,
+          message: "Steam browser login opened. Complete login to continue the account import.",
         },
       });
     } finally {
@@ -204,7 +251,7 @@ describe("Steam account session status", () => {
 });
 
 describe("Steam account and family library import", () => {
-  it("requests the Steam browser login command when no session is saved", async () => {
+  it("reports a recoverable login-required error when no session is saved", async () => {
     const dataDir = tempDataDir();
     const previous = process.env.GAME_LIBRARY_PLUGIN_DATA_DIR;
     process.env.GAME_LIBRARY_PLUGIN_DATA_DIR = dataDir;
@@ -214,13 +261,15 @@ describe("Steam account and family library import", () => {
         payload: {},
       });
 
-      assert.equal(result.result.hostApi, "tools.requestReviewedCommand");
-      assert.deepEqual(result.result.payload, {
-        toolId: "steam-auth",
-        commandId: "auth",
-        providerId: ACCOUNT_PROVIDER_ID,
-        variables: {},
-        message: "Steam browser login is required. Confirm the Steam browser login command, complete login, then retry.",
+      assert.equal(result.result, undefined);
+      assert.match(result.error.message, /Steam browser login is required/);
+      assert.deepEqual(result.error.data, {
+        messageKey: "error.providerLoginRequired",
+        messageParams: { providerId: ACCOUNT_PROVIDER_ID },
+      });
+      assert.deepEqual(steamSessionStatus(dataDir), {
+        loggedIn: false,
+        message: "Steam browser login has expired.",
       });
     } finally {
       restoreEnv("GAME_LIBRARY_PLUGIN_DATA_DIR", previous);

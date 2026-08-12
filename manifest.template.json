@@ -1,7 +1,7 @@
 {
   "id": "community.steam_import_node",
   "name": "Steam Import Node Provider",
-  "version": "0.2.5",
+  "version": "0.2.8",
   "author": "Game Library Client Community",
   "description": "JSON-RPC provider that scans installed Steam libraries, imports logged-in Steam account and family-shared games, and launches through steam:// URLs.",
   "logoPath": "logo.svg",
@@ -11,7 +11,8 @@
     "games-read",
     "launch-url",
     "launch-process",
-    "http-allowed-domains"
+    "http-allowed-domains",
+    "http-cookie-session"
   ],
   "allowedPaths": [
     "<PLUGIN_ROOT>",
@@ -23,6 +24,7 @@
     "steamcommunity.com"
   ],
   "dependencies": {
+    "runnerVersion": "json-rpc-stdio-v2",
     "runtimes": [
       {
         "kind": "node",
@@ -53,7 +55,8 @@
     "accounts.acceptStatus",
     "launch.acceptResolution",
     "launch.acceptRequest",
-    "tools.requestReviewedCommand"
+    "tools.requestReviewedCommand",
+    "http.fetchAllowed"
   ],
   "externalTools": [
     {
@@ -110,7 +113,7 @@
       "name": "Read Steam account and family-shared games",
       "hostApi": "accounts.acceptCandidates",
       "intermediateHostApis": [
-        "tools.requestReviewedCommand"
+        "http.fetchAllowed"
       ]
     },
     {

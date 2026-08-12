@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pluginRoot = path.resolve(__dirname, "..");
@@ -119,7 +119,71 @@ describe("Node JSON-RPC runtime host compatibility", () => {
     assert.equal(launch.result.payload.url, "steam://rungameid/730");
   });
 
-  it("returns the live client request id when async account import fails", () => {
+  it("returns login-required without requesting a reviewed command from a background import", () => {
+    const tempRoot = mkdtempSync(path.join(tmpdir(), "steam-runtime-login-required-"));
+    try {
+      const dataDir = path.join(tempRoot, "plugin-data");
+      mkdirSync(dataDir, { recursive: true });
+      const response = executeRuntime(
+        {
+          id: "account-import-login-required",
+          params: {
+            actionId: "read-account-candidates",
+            payload: { providerId: "community.steam_import_node:account" },
+          },
+        },
+        { GAME_LIBRARY_PLUGIN_DATA_DIR: dataDir },
+        { expectResult: false, expectedHostCalls: 0 },
+      );
+
+      assert.equal(response.error.data.messageKey, "error.providerLoginRequired");
+      assert.equal(
+        response.error.data.messageParams.providerId,
+        "community.steam_import_node:account",
+      );
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("launches one reviewed login command and returns a pending account status", () => {
+    const tempRoot = mkdtempSync(path.join(tmpdir(), "steam-runtime-login-"));
+    try {
+      const dataDir = path.join(tempRoot, "plugin-data");
+      mkdirSync(dataDir, { recursive: true });
+      const response = executeRuntime(
+        {
+          id: "account-login",
+          params: {
+            actionId: "login",
+            payload: { providerId: "community.steam_import_node:account" },
+          },
+        },
+        { GAME_LIBRARY_PLUGIN_DATA_DIR: dataDir },
+        {
+          expectedHostCalls: 1,
+          expectedHostApis: ["tools.requestReviewedCommand"],
+          hostResponses: [{
+            jsonrpc: "2.0",
+            id: "host-1",
+            result: { payload: { ok: true, messageKey: "command.pluginProcessLaunched" } },
+          }],
+        },
+      );
+
+      assert.equal(response.result.hostApi, "accounts.acceptStatus");
+      assert.deepEqual(response.result.payload, {
+        providerId: "community.steam_import_node:account",
+        loggedIn: false,
+        pending: true,
+        message: "Steam browser login opened. Complete login to continue the account import.",
+      });
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("routes account HTTP through the host and keeps the request id on host failure", () => {
     const tempRoot = mkdtempSync(path.join(tmpdir(), "steam-runtime-async-error-"));
     try {
       const dataDir = path.join(tempRoot, "plugin-data");
@@ -139,13 +203,6 @@ describe("Node JSON-RPC runtime host compatibility", () => {
         }),
         "utf8",
       );
-      const preload = path.join(tempRoot, "fail-fetch.mjs");
-      writeFileSync(
-        preload,
-        "globalThis.fetch = async () => { throw new Error('simulated fetch failed'); };\n",
-        "utf8",
-      );
-
       const response = executeRuntime(
         {
           id: "community.steam_import_node:read-account-candidates:host-id",
@@ -159,18 +216,114 @@ describe("Node JSON-RPC runtime host compatibility", () => {
         },
         {
           GAME_LIBRARY_PLUGIN_DATA_DIR: dataDir,
-          NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
         },
-        { expectResult: false },
+        {
+          expectResult: false,
+          expectedHostCalls: 1,
+          hostResponses: [{
+            jsonrpc: "2.0",
+            id: "host-1",
+            error: { code: -32000, message: "simulated host fetch failed" },
+          }],
+        },
       );
 
       assert.equal(response.id, "community.steam_import_node:read-account-candidates:host-id");
-      assert.equal(response.error.message, "simulated fetch failed");
+      assert.equal(response.error.message, "simulated host fetch failed");
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("completes account import through four mediated host HTTP calls", () => {
+    const tempRoot = mkdtempSync(path.join(tmpdir(), "steam-runtime-host-http-"));
+    try {
+      const dataDir = path.join(tempRoot, "plugin-data");
+      mkdirSync(dataDir, { recursive: true });
+      writeFileSync(
+        path.join(dataDir, "steam-session.json"),
+        JSON.stringify({
+          exportedAt: new Date().toISOString(),
+          cookies: [{
+            name: "steamLoginSecure",
+            value: "session-cookie",
+            domain: ".steampowered.com",
+            path: "/",
+          }],
+        }),
+        "utf8",
+      );
+      const token = fakeSteamToken("76561198000000001");
+      const response = executeRuntime(
+        {
+          id: "account-import-success",
+          params: {
+            actionId: "read-account-candidates",
+            payload: { options: { parameters: { language: "zh-CN" } } },
+          },
+        },
+        { GAME_LIBRARY_PLUGIN_DATA_DIR: dataDir },
+        {
+          expectedHostCalls: 4,
+          assertHostCalls(hostCalls) {
+            assert.equal(hostCalls[0].params.payload.url, "https://store.steampowered.com/pointssummary/ajaxgetasyncconfig");
+            assert.equal(hostCalls[0].params.payload.redirect, "manual");
+            assert.equal(hostCalls[0].params.payload.includeSetCookie, true);
+            assert.match(hostCalls[0].params.payload.headers.cookie, /steamLoginSecure=session-cookie/);
+            assert.match(hostCalls[1].params.payload.url, /IPlayerService\/GetOwnedGames/);
+            assert.match(hostCalls[2].params.payload.url, /IFamilyGroupsService\/GetFamilyGroupForUser/);
+            assert.match(hostCalls[3].params.payload.url, /IFamilyGroupsService\/GetSharedLibraryApps/);
+          },
+          hostResponses: [
+            hostHttpResponse(1, { webapi_token: token }),
+            hostHttpResponse(2, { response: { games: [{ appid: 10, name: "Owned Game" }] } }),
+            hostHttpResponse(3, { response: { family_groupid: "123456" } }),
+            hostHttpResponse(4, {
+              response: {
+                apps: [{
+                  appid: 30,
+                  name: "Shared Game",
+                  owner_steamids: ["76561198000000003"],
+                  exclude_reason: 0,
+                  app_type: 1,
+                }],
+              },
+            }),
+          ],
+        },
+      );
+
+      assert.equal(response.result.hostApi, "accounts.acceptCandidates");
+      assert.deepEqual(
+        response.result.payload.candidates.map((candidate) => candidate.externalIds.steam),
+        ["10", "30"],
+      );
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
 });
+
+function hostHttpResponse(sequence, body) {
+  return {
+    jsonrpc: "2.0",
+    id: `host-${sequence}`,
+    result: {
+      payload: {
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+        headers: {},
+      },
+    },
+  };
+}
+
+function fakeSteamToken(steamId) {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" }), "utf8").toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ sub: steamId, exp: 1893456000 }), "utf8").toString("base64url");
+  return `${header}.${payload}.signature`;
+}
 
 function executeRuntime({ id, params }, extraEnv = {}, options = {}) {
   const request = JSON.stringify({
@@ -183,9 +336,11 @@ function executeRuntime({ id, params }, extraEnv = {}, options = {}) {
         "imports.acceptLibraries",
         "imports.acceptCandidates",
         "accounts.acceptCandidates",
+        "accounts.acceptStatus",
         "launch.acceptResolution",
         "launch.acceptRequest",
         "tools.requestReviewedCommand",
+        "http.fetchAllowed",
       ],
       ...params,
     },
@@ -193,7 +348,7 @@ function executeRuntime({ id, params }, extraEnv = {}, options = {}) {
 
   const result = spawnSync(process.execPath, [runtimeEntry], {
     cwd: path.dirname(runtimeEntry),
-    input: `${request}\n`,
+    input: `${[request, ...(options.hostResponses ?? []).map(JSON.stringify)].join("\n")}\n`,
     env: {
       ...process.env,
       ...extraEnv,
@@ -205,7 +360,16 @@ function executeRuntime({ id, params }, extraEnv = {}, options = {}) {
   const stdout = result.stdout.toString("utf8").trim();
   assert.ok(stdout.startsWith("{"), `runtime stdout must start with JSON: ${stdout}`);
   assert.ok(stdout.endsWith("}"), `runtime stdout must end with JSON: ${stdout}`);
-  const response = JSON.parse(stdout);
+  const messages = stdout.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+  const hostCalls = messages.filter((message) => message.method === "host.call");
+  if (options.expectedHostCalls !== undefined) {
+    assert.equal(hostCalls.length, options.expectedHostCalls);
+    if (options.expectedHostApis) {
+      assert.deepEqual(hostCalls.map((message) => message.params.apiId), options.expectedHostApis);
+    }
+  }
+  options.assertHostCalls?.(hostCalls);
+  const response = messages.at(-1);
   assert.equal(response.jsonrpc, "2.0");
   assert.equal(response.id, id);
   if (options.expectResult !== false) {

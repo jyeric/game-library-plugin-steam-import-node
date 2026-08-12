@@ -12,7 +12,8 @@ import {
   STEAM_STORE_COOKIE_URL,
   compactCookiePairs,
 } from "../steam/cookies.mjs";
-import { sessionFilePath, writeJsonPrivate } from "../steam/session.mjs";
+import { decodeSteamAccessToken, parseStoreWebApiToken } from "../steam/accessToken.mjs";
+import { beginSteamLogin, completeSteamLogin } from "../steam/session.mjs";
 
 const LOGIN_URL = "https://store.steampowered.com/login/?redir=pointssummary%2Fajaxgetasyncconfig&redir_ssl=1";
 const BLANK_URL = "about:blank";
@@ -29,6 +30,7 @@ async function main() {
 
   const dataDir = args.dataDir ?? join(homedir(), ".game-library-steam");
   mkdirSync(dataDir, { recursive: true });
+  beginSteamLogin(dataDir);
   const profileDir = join(dataDir, "browser-profile");
   mkdirSync(profileDir, { recursive: true });
 
@@ -48,6 +50,9 @@ async function main() {
   const page = await connectToFirstPage(port);
   await page.call("Network.enable");
   await page.call("Page.enable");
+  // This is the plugin's dedicated browser profile. Clearing it prevents a stale
+  // steamLoginSecure cookie from completing re-login before the user sees Steam.
+  await page.call("Network.clearBrowserCookies");
   await page.call("Page.navigate", { url: LOGIN_URL });
 
   const deadline = Date.now() + MAX_LOGIN_MS;
@@ -58,7 +63,7 @@ async function main() {
     }
 
     const exportData = await cookieExport(page);
-    if (hasLoginCookies(exportData.cookies)) {
+    if (hasLoginCookies(exportData.cookies) && await hasUsableStoreToken(page)) {
       writeSession(dataDir, exportData);
       await closeBrowser(page);
       return;
@@ -166,12 +171,29 @@ async function cookieExport(page) {
 }
 
 function writeSession(dataDir, data) {
-  writeJsonPrivate(sessionFilePath(dataDir), data);
+  completeSteamLogin(dataDir, data);
 }
 
 export function hasLoginCookies(cookies) {
-  const names = new Set(cookies.map((cookie) => String(cookie.name)));
-  return [...LOGIN_COOKIE_NAMES].every((name) => names.has(name));
+  return [...LOGIN_COOKIE_NAMES].every((name) => cookies.some((cookie) =>
+    String(cookie.name) === name
+      && domainMatchesSteamStore(cookie.domain)
+      && !cookieExpired(cookie.expires),
+  ));
+}
+
+async function hasUsableStoreToken(page) {
+  try {
+    const evaluated = await page.call("Runtime.evaluate", {
+      expression: `fetch(${JSON.stringify(STEAM_STORE_ASYNC_CONFIG_URL)}, { credentials: "include", headers: { "X-Requested-With": "XMLHttpRequest" } }).then((response) => response.text())`,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    const token = parseStoreWebApiToken(evaluated?.result?.value);
+    return Boolean(token && decodeSteamAccessToken(token).steamId);
+  } catch {
+    return false;
+  }
 }
 
 function domainMatchesSteam(domain) {
@@ -185,6 +207,11 @@ function domainMatchesSteam(domain) {
 function domainMatchesSteamStore(domain) {
   const value = String(domain ?? "").replace(/^\./, "").toLowerCase();
   return value === STEAM_STORE_HOST || STEAM_STORE_HOST.endsWith(`.${value}`);
+}
+
+function cookieExpired(expires) {
+  const timestamp = Number(expires);
+  return Number.isFinite(timestamp) && timestamp > 0 && timestamp * 1000 <= Date.now();
 }
 
 async function closeBrowser(page) {

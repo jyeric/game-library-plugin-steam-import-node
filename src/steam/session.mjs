@@ -1,9 +1,11 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SESSION_FILE_NAME = "steam-session.json";
 const TOKEN_CACHE_FILE_NAME = "steam-token.json";
+const LOGIN_STATE_FILE_NAME = "steam-login-state.json";
+const LOGIN_PENDING_TTL_MS = 10 * 60 * 1000;
 
 export function sessionFilePath(dataDir = process.env.GAME_LIBRARY_PLUGIN_DATA_DIR) {
   return join(dataDirRoot(dataDir), SESSION_FILE_NAME);
@@ -11,6 +13,10 @@ export function sessionFilePath(dataDir = process.env.GAME_LIBRARY_PLUGIN_DATA_D
 
 export function tokenCacheFilePath(dataDir = process.env.GAME_LIBRARY_PLUGIN_DATA_DIR) {
   return join(dataDirRoot(dataDir), TOKEN_CACHE_FILE_NAME);
+}
+
+export function loginStateFilePath(dataDir = process.env.GAME_LIBRARY_PLUGIN_DATA_DIR) {
+  return join(dataDirRoot(dataDir), LOGIN_STATE_FILE_NAME);
 }
 
 export function loadSessionCookieExport(dataDir) {
@@ -32,6 +38,24 @@ export function loadSessionCookieExport(dataDir) {
 
 /** Returns sanitized Steam login state without exposing cookie or token material. */
 export function steamSessionStatus(dataDir) {
+  const loginState = readJson(loginStateFilePath(dataDir));
+  if (loginState?.state === "pending") {
+    const startedAt = Date.parse(loginState.startedAt ?? "");
+    if (Number.isFinite(startedAt) && Date.now() - startedAt < LOGIN_PENDING_TTL_MS) {
+      return {
+        loggedIn: false,
+        pending: true,
+        message: "Waiting for Steam browser login to complete.",
+      };
+    }
+  }
+  if (loginState?.state === "required") {
+    return {
+      loggedIn: false,
+      message: "Steam browser login has expired.",
+    };
+  }
+
   const session = loadSessionCookieExport(dataDir);
   const loginCookie = session?.cookies?.find(
     (cookie) => String(cookie?.name).toLowerCase() === "steamloginsecure",
@@ -52,6 +76,41 @@ export function steamSessionStatus(dataDir) {
   };
 }
 
+/** Marks the saved browser session unusable after Steam rejects token refresh. */
+export function markSteamLoginRequired(dataDir) {
+  writeJsonPrivate(loginStateFilePath(dataDir), {
+    state: "required",
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+/** Marks login pending before the detached browser helper starts, closing the stale-cookie race. */
+export function markSteamLoginPending(dataDir) {
+  writeJsonPrivate(loginStateFilePath(dataDir), {
+    state: "pending",
+    startedAt: new Date().toISOString(),
+  });
+}
+
+/** Starts a fresh login without allowing an old cookie or token to report a false success. */
+export function beginSteamLogin(dataDir) {
+  removePrivateFile(sessionFilePath(dataDir));
+  removePrivateFile(tokenCacheFilePath(dataDir));
+  markSteamLoginPending(dataDir);
+}
+
+/** Commits a newly captured Steam session and clears the pending-login marker. */
+export function completeSteamLogin(dataDir, session) {
+  writeJsonPrivate(sessionFilePath(dataDir), session);
+  removePrivateFile(tokenCacheFilePath(dataDir));
+  removePrivateFile(loginStateFilePath(dataDir));
+}
+
+/** Clears a stale login-required marker after a verified account-library request succeeds. */
+export function clearSteamLoginState(dataDir) {
+  removePrivateFile(loginStateFilePath(dataDir));
+}
+
 export function writeJsonPrivate(filePath, data) {
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, { mode: 0o600 });
@@ -63,6 +122,15 @@ function readJson(filePath) {
     return JSON.parse(readFileSync(filePath, "utf8"));
   } catch {
     return undefined;
+  }
+}
+
+function removePrivateFile(filePath) {
+  if (!existsSync(filePath)) return;
+  try {
+    unlinkSync(filePath);
+  } catch {
+    // Best effort: the caller will still overwrite the state on the next successful login.
   }
 }
 

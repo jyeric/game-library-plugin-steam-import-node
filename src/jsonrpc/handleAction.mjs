@@ -12,13 +12,17 @@ import {
   readSteamAccountGames,
 } from "../steam/accountLibrary.mjs";
 import { isSteamLoginRequiredError } from "../steam/accessToken.mjs";
-import { steamSessionStatus } from "../steam/session.mjs";
+import {
+  markSteamLoginRequired,
+  markSteamLoginPending,
+  steamSessionStatus,
+} from "../steam/session.mjs";
 
 const LOGIN_REQUIRED_MESSAGE =
   "Steam browser login is required. Confirm the Steam browser login command, complete login, then retry.";
-const LOGIN_COMPLETED_MESSAGE = "Steam browser login completed.";
+const LOGIN_PENDING_MESSAGE = "Steam browser login opened. Complete login to continue the account import.";
 
-export async function handleAction(id, params) {
+export async function handleAction(id, params, context = {}) {
   try {
     switch (params?.actionId) {
       case "login":
@@ -30,7 +34,7 @@ export async function handleAction(id, params) {
       case "read-candidates":
         return await readCandidates(id, params?.payload);
       case "read-account-candidates":
-        return await readAccountCandidates(id, params?.payload ?? {});
+        return await readAccountCandidates(id, params?.payload ?? {}, context);
       case "resolve-launch":
         return await resolveLaunch(id, params?.payload);
       case "request-launch":
@@ -39,6 +43,10 @@ export async function handleAction(id, params) {
         return errorResponse(id, `unsupported action: ${params?.actionId ?? "unknown"}`);
     }
   } catch (error) {
+    if (isSteamLoginRequiredError(error)) {
+      markSteamLoginRequired();
+      return loginRequiredError(id, error);
+    }
     return errorResponse(id, errorMessage(error));
   }
 }
@@ -64,9 +72,11 @@ function readCandidates(id, payload) {
   });
 }
 
-async function readAccountCandidates(id, payload) {
+async function readAccountCandidates(id, payload, context) {
   try {
-    const { candidates, warnings } = await readSteamAccountGames(payload);
+    const { candidates, warnings } = await readSteamAccountGames(payload, {
+      fetchImpl: context.fetchImpl,
+    });
     return response(id, "accounts.acceptCandidates", {
       providerId: ACCOUNT_PROVIDER_ID,
       candidates,
@@ -74,7 +84,8 @@ async function readAccountCandidates(id, payload) {
     });
   } catch (error) {
     if (isSteamLoginRequiredError(error)) {
-      return requestAuthCommand(id, ACCOUNT_PROVIDER_ID);
+      markSteamLoginRequired();
+      return loginRequiredError(id, error);
     }
     throw error;
   }
@@ -82,13 +93,14 @@ async function readAccountCandidates(id, payload) {
 
 function login(id, payload) {
   if (hostResult(payload, "tools.requestReviewedCommand")) {
-    const status = steamSessionStatus();
     return response(id, "accounts.acceptStatus", {
       providerId: ACCOUNT_PROVIDER_ID,
-      ...status,
-      message: status.loggedIn ? LOGIN_COMPLETED_MESSAGE : status.message,
+      loggedIn: false,
+      pending: true,
+      message: LOGIN_PENDING_MESSAGE,
     });
   }
+  markSteamLoginPending();
   return requestAuthCommand(id, ACCOUNT_PROVIDER_ID);
 }
 
@@ -156,6 +168,18 @@ function requestAuthCommand(id, providerId) {
     providerId,
     variables: {},
     message: LOGIN_REQUIRED_MESSAGE,
+  });
+}
+
+function loginRequiredError(id, error) {
+  const message = error instanceof Error && error.message
+    ? error.message
+    : "Steam browser login has expired.";
+  return errorResponse(id, message, {
+    messageKey: "error.providerLoginRequired",
+    messageParams: {
+      providerId: ACCOUNT_PROVIDER_ID,
+    },
   });
 }
 

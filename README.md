@@ -10,8 +10,10 @@ The plugin is intentionally small and npm dependency-free. It is a working examp
 - Parse `steamapps/libraryfolders.vdf`.
 - Parse `steamapps/appmanifest_*.acf`.
 - Return installed Steam games through `imports.acceptCandidates`.
-- Open a reviewed Steam browser login command and save Steam store cookies under the plugin data dir.
+- Open a reviewed Steam browser login command, clear stale cookies from the plugin-only browser profile, and save a session only after Steam returns a usable store token.
 - Refresh the Steam store `webapi_token` from `https://store.steampowered.com/pointssummary/ajaxgetasyncconfig`.
+- Route Steam HTTP traffic through the client's permission-checked `http.fetchAllowed` host API so the Node runtime remains network-isolated.
+- Report an expired Steam session as a recoverable `error.providerLoginRequired` result instead of repeatedly requesting the login command from a background import.
 - Return Steam account-library and family-shared games through `accounts.acceptCandidates` without requiring a Steam Web API key. These candidates contribute `steam://install/{appid}` acquisition routes but no launch options; launch options remain owned by the client's built-in installed-Steam import.
 - Resolve and request launch through `launch.acceptRequest` with a Steam URL.
 - Avoid hardcoded drive scanning. macOS and Linux auto-detection currently report unsupported unless `STEAM_ROOT` is provided.
@@ -82,12 +84,13 @@ Do not commit `manifest.local.json`; it contains your local absolute path and is
    - `launch-url`
    - `launch-process`
    - `http-allowed-domains`
+   - `http-cookie-session`
 8. Save the plugin package.
 9. Open the Imports page and choose the Steam Import plugin provider.
 10. Run the installed-game import scan. Imported candidates should include `externalIds.steam`.
 11. For account and family-library import, choose the Steam Account and Family Library method. The Imports page shows the current Steam account or a login prompt. Confirm the reviewed browser command and complete login in the opened window before continuing.
 
-The plugin stores Steam cookies in the plugin data directory and refreshes the short-lived store access token on demand. The built-in Steam Web API key setting is not used by this plugin.
+The plugin stores Steam cookies in the plugin data directory and refreshes the short-lived store access token on demand. When Steam rejects that refresh, the client offers **Log in again and retry**; the plugin clears the rejected session, waits for a newly captured browser session, and then the client retries the retained import run. The built-in Steam Web API key setting is not used by this plugin.
 
 For runtime testing against a non-standard Steam installation, set `STEAM_ROOT` before launching the app so the plugin process inherits it:
 

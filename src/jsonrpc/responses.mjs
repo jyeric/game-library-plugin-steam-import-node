@@ -9,14 +9,17 @@ export function response(id, hostApi, payload) {
   };
 }
 
-export function errorResponse(id, message) {
+export function errorResponse(id, message, data) {
+  const error = {
+    code: -32000,
+    message,
+  };
+  if (data && typeof data === "object") {
+    error.data = data;
+  }
   return {
     jsonrpc: "2.0",
     id,
-    error: {
-      code: -32000,
-      message,
-    },
+    error,
   };
 }
-
