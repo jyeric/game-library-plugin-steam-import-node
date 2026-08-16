@@ -79,6 +79,14 @@ describe("Steam installed game scan", () => {
     assert.equal(candidate.title, "Counter-Strike 2");
     assert.equal(candidate.source, "steam");
     assert.equal(candidate.externalIds.steam, "730");
+    assert.equal(candidate.bannerUrl, "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/730/library_hero_2x.jpg");
+    assert.deepEqual(candidate.artwork.banner, {
+      source: "provider",
+      providerId: "steam",
+      externalId: "730",
+      cachedPath: candidate.bannerUrl,
+      locked: false,
+    });
     assert.equal(candidate.executable, "steam://rungameid/730");
     assert.equal(candidate.confidence, 100);
   });

@@ -385,6 +385,10 @@ describe("Steam account and family library import", () => {
     );
     const shared = result.candidates.find((candidate) => candidate.externalIds.steam === "30");
     assert.match(shared.description, /family-shared/);
+    assert.equal(shared.bannerUrl, "https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/30/library_hero_2x.jpg");
+    assert.equal(shared.artwork.banner.providerId, "steam");
+    assert.equal(shared.artwork.banner.externalId, "30");
+    assert.equal(shared.artwork.banner.cachedPath, shared.bannerUrl);
     assert.equal(shared.path, "steam://install/30");
     assert.equal(shared.executable, "steam://install/30");
     assert.deepEqual(shared.networkManifest.launchOptions, []);

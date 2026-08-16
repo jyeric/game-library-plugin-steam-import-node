@@ -3,6 +3,7 @@ import path from "node:path";
 import { detectSteamRoot } from "./detectSteamRoot.mjs";
 import { countAppManifests, readLibraryFolders } from "./parseLibraryFolders.mjs";
 import { readAppManifest } from "./parseAppManifest.mjs";
+import { steamBannerArtwork } from "./artwork.mjs";
 
 export function detectSteamLibraries(options = {}) {
   const detected = detectSteamRoot(options);
@@ -56,6 +57,7 @@ export function scanInstalledGames(options = {}) {
 }
 
 export function steamGameToImportCandidate(game) {
+  const artwork = steamBannerArtwork(game.appid);
   return {
     id: `steam-${game.appid}`,
     title: game.name,
@@ -66,6 +68,7 @@ export function steamGameToImportCandidate(game) {
     externalIds: {
       steam: game.appid,
     },
+    ...artwork,
     action: "add",
     confidence: 100,
   };
@@ -89,4 +92,3 @@ function normalizePayloadLibraries(libraries) {
     .filter(Boolean)
     .map((library) => ({ path: path.normalize(library.path) }));
 }
-

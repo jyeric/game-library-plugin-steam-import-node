@@ -38,7 +38,12 @@ describe("Node JSON-RPC runtime host compatibility", () => {
 
     assert.equal(response.result.hostApi, "imports.acceptCandidates");
     assert.equal(response.result.payload.candidates.length, 2);
-    assert.ok(response.result.payload.candidates.some((candidate) => candidate.externalIds.steam === "2403320"));
+    const candidate = response.result.payload.candidates.find((item) => item.externalIds.steam === "2403320");
+    assert.ok(candidate);
+    assert.equal(candidate.artwork.banner.source, "provider");
+    assert.equal(candidate.artwork.banner.providerId, "steam");
+    assert.equal(candidate.artwork.banner.externalId, "2403320");
+    assert.equal(candidate.artwork.banner.cachedPath, candidate.bannerUrl);
   });
 
   it("ignores stale wrapper stdin files and answers the live request id", () => {

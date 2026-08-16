@@ -1,5 +1,6 @@
 import { clearTokenCache, getStoreAccessToken, isSteamLoginRequiredError } from "./accessToken.mjs";
 import { clearSteamLoginState } from "./session.mjs";
+import { steamBannerArtwork } from "./artwork.mjs";
 
 export const PLUGIN_ID = "community.steam_import_node";
 export const IMPORT_PROVIDER_ID = `${PLUGIN_ID}:import`;
@@ -201,6 +202,7 @@ export function steamAccountGameToImportCandidate(game) {
   const installUri = `steam://install/${appid}`;
   const title = game.name ?? `Steam app ${appid}`;
   const shared = game.relation === "family-shared";
+  const artwork = steamBannerArtwork(appid);
   return {
     id: `steam-account-${appid}`,
     title,
@@ -213,6 +215,7 @@ export function steamAccountGameToImportCandidate(game) {
     externalIds: {
       steam: appid,
     },
+    ...artwork,
     externalIdProvenance: shared
       ? {
           steam: {

@@ -10,6 +10,7 @@ The plugin is intentionally small and npm dependency-free. It is a working examp
 - Parse `steamapps/libraryfolders.vdf`.
 - Parse `steamapps/appmanifest_*.acf`.
 - Return installed Steam games through `imports.acceptCandidates`.
+- Include Steam provider-owned library hero banners on installed, owned, and family-shared import candidates.
 - Open a reviewed Steam browser login command, clear stale cookies from the plugin-only browser profile, and save a session only after Steam returns a usable store token.
 - Refresh the Steam store `webapi_token` from `https://store.steampowered.com/pointssummary/ajaxgetasyncconfig`.
 - Route Steam HTTP traffic through the client's permission-checked `http.fetchAllowed` host API so the Node runtime remains network-isolated.
@@ -118,6 +119,6 @@ The runtime must read one JSON-RPC request from stdin and write one JSON-RPC res
 
 - Windows auto-detection is implemented first.
 - macOS/Linux support is limited to explicit `STEAM_ROOT` for now.
-- Steam artwork, Steam metadata refresh, and Steam Cloud save path discovery are future extensions.
+- Steam metadata refresh and Steam Cloud save path discovery are future extensions; imported candidates now carry the Steam library hero banner source.
 - Steam account-family import depends on Steam's store access token and family library Web APIs, so the saved browser session must be refreshed when Steam expires it.
 - This plugin launches with `steam://rungameid/{appid}` and does not execute `steam.exe` directly.

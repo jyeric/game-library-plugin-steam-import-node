@@ -1,7 +1,7 @@
 {
   "id": "community.steam_import_node",
   "name": "Steam Import Node Provider",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "author": "Game Library Client Community",
   "description": "JSON-RPC provider that scans installed Steam libraries, imports logged-in Steam account and family-shared games, and launches through steam:// URLs.",
   "logoPath": "logo.svg",
