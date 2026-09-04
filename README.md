@@ -12,7 +12,8 @@ The plugin is intentionally small and npm dependency-free. It is a working examp
 - Return installed Steam games through `imports.acceptCandidates`.
 - Include Steam provider-owned library hero banners on installed, owned, and family-shared import candidates.
 - Open a reviewed Steam browser login command, clear stale cookies from the plugin-only browser profile, and save a session only after Steam returns a usable store token.
-- Refresh the Steam store `webapi_token` from `https://store.steampowered.com/pointssummary/ajaxgetasyncconfig`.
+- Preserve the browser's `steamRefresh_steam` cookie and use Steam's WebBrowser `/jwt/finalizelogin` plus `transfer_info` flow to renew expired web access cookies without forcing an interactive login.
+- Persist cookies returned during Steam web-session renewal, then refresh the short-lived store `webapi_token` from `https://store.steampowered.com/pointssummary/ajaxgetasyncconfig`.
 - Route Steam HTTP traffic through the client's permission-checked `http.fetchAllowed` host API so the Node runtime remains network-isolated.
 - Report an expired Steam session as a recoverable `error.providerLoginRequired` result instead of repeatedly requesting the login command from a background import.
 - Return Steam account-library and family-shared games through `accounts.acceptCandidates` without requiring a Steam Web API key. These candidates contribute `steam://install/{appid}` acquisition routes but no launch options; launch options remain owned by the client's built-in installed-Steam import.
@@ -91,7 +92,7 @@ Do not commit `manifest.local.json`; it contains your local absolute path and is
 10. Run the installed-game import scan. Imported candidates should include `externalIds.steam`.
 11. For account and family-library import, choose the Steam Account and Family Library method. The Imports page shows the current Steam account or a login prompt. Confirm the reviewed browser command and complete login in the opened window before continuing.
 
-The plugin stores Steam cookies in the plugin data directory and refreshes the short-lived store access token on demand. When Steam rejects that refresh, the client offers **Log in again and retry**; the plugin clears the rejected session, waits for a newly captured browser session, and then the client retries the retained import run. The built-in Steam Web API key setting is not used by this plugin.
+The plugin stores Steam cookies in the plugin data directory. When `steamLoginSecure` expires, it first uses the longer-lived `steamRefresh_steam` WebBrowser refresh cookie through `login.steampowered.com/jwt/finalizelogin`, applies Steam's returned cross-domain transfers, persists the renewed cookies, and only then refreshes the short-lived store `webapi_token`. A saved session is reported as refreshable rather than expired while that refresh cookie remains usable. Only when Steam rejects the refresh credential does the client offer **Log in again and retry**. The built-in Steam Web API key setting is not used by this plugin.
 
 For runtime testing against a non-standard Steam installation, set `STEAM_ROOT` before launching the app so the plugin process inherits it:
 
@@ -120,5 +121,5 @@ The runtime must read one JSON-RPC request from stdin and write one JSON-RPC res
 - Windows auto-detection is implemented first.
 - macOS/Linux support is limited to explicit `STEAM_ROOT` for now.
 - Steam metadata refresh and Steam Cloud save path discovery are future extensions; imported candidates now carry the Steam library hero banner source.
-- Steam account-family import depends on Steam's store access token and family library Web APIs, so the saved browser session must be refreshed when Steam expires it.
+- Steam account-family import depends on Steam's store access token and family library Web APIs. The plugin now renews expired web access cookies from the saved WebBrowser refresh cookie, but Steam can still require an interactive login when that refresh credential is revoked or expires.
 - This plugin launches with `steam://rungameid/{appid}` and does not execute `steam.exe` directly.

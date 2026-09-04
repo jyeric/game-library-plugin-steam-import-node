@@ -1,6 +1,18 @@
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { buildSteamStoreCookieHeader, STEAM_STORE_ASYNC_CONFIG_URL } from "./cookies.mjs";
-import { loadSessionCookieExport, tokenCacheFilePath, writeJsonPrivate } from "./session.mjs";
+import {
+  applySteamResponseCookies,
+  buildSteamCookieHeaderForUrl,
+  buildSteamStoreCookieHeader,
+  hasUsableSteamRefreshCookie,
+  STEAM_LOGIN_COOKIE_URL,
+  STEAM_STORE_ASYNC_CONFIG_URL,
+} from "./cookies.mjs";
+import {
+  loadSessionCookieExport,
+  saveSessionCookieExport,
+  tokenCacheFilePath,
+  writeJsonPrivate,
+} from "./session.mjs";
 
 const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
 const TOKEN_FALLBACK_TTL_MS = 30 * 60 * 1000;
@@ -27,24 +39,53 @@ export async function getStoreAccessToken(options = {}) {
     }
   }
 
-  const cookieExport = loadSessionCookieExport(dataDir);
-  const cookie = buildSteamStoreCookieHeader(cookieExport);
-  if (!cookie || !/\bsteamLoginSecure=/i.test(cookie)) {
+  let cookieExport = loadSessionCookieExport(dataDir);
+  let cookie = buildSteamStoreCookieHeader(cookieExport);
+  if ((!cookie || !/\bsteamLoginSecure=/i.test(cookie)) && !hasUsableSteamRefreshCookie(cookieExport)) {
     throw new SteamLoginRequiredError("Steam browser login is required before an access token can be refreshed.");
   }
 
   const fetchImpl = options.fetchImpl ?? fetch;
-  const response = await fetchStoreAsyncConfig(fetchImpl, cookie);
+  let refreshedWebSession = false;
+  if ((!cookie || !/\bsteamLoginSecure=/i.test(cookie)) && hasUsableSteamRefreshCookie(cookieExport)) {
+    cookieExport = await refreshSteamWebSession(fetchImpl, cookieExport, dataDir);
+    refreshedWebSession = true;
+    cookie = buildSteamStoreCookieHeader(cookieExport);
+    if (!cookie || !/\bsteamLoginSecure=/i.test(cookie)) {
+      throw new SteamLoginRequiredError("Steam refresh cookie did not produce a usable store login session.");
+    }
+  }
+  let response = await fetchStoreAsyncConfig(fetchImpl, cookieExport, dataDir);
 
   if (response.status === 401 || response.status === 403) {
-    throw new SteamLoginRequiredError(`Steam store token refresh requires a logged-in browser session; HTTP ${response.status}.`);
+    if (!refreshedWebSession && hasUsableSteamRefreshCookie(cookieExport)) {
+      cookieExport = await refreshSteamWebSession(fetchImpl, cookieExport, dataDir);
+      refreshedWebSession = true;
+      response = await fetchStoreAsyncConfig(fetchImpl, cookieExport, dataDir);
+    }
+    if (response.status === 401 || response.status === 403) {
+      throw new SteamLoginRequiredError(`Steam store token refresh requires a logged-in browser session; HTTP ${response.status}.`);
+    }
   }
   if (!response.ok) {
     throw new Error(`Steam store token refresh failed with HTTP ${response.status || "unknown"}.`);
   }
 
-  const text = await response.text();
-  const token = parseStoreWebApiToken(text);
+  let text = await response.text();
+  let token = parseStoreWebApiToken(text);
+  if (!token && !refreshedWebSession && hasUsableSteamRefreshCookie(cookieExport)) {
+    cookieExport = await refreshSteamWebSession(fetchImpl, cookieExport, dataDir);
+    refreshedWebSession = true;
+    response = await fetchStoreAsyncConfig(fetchImpl, cookieExport, dataDir);
+    if (response.status === 401 || response.status === 403) {
+      throw new SteamLoginRequiredError(`Steam store token refresh requires a logged-in browser session; HTTP ${response.status}.`);
+    }
+    if (!response.ok) {
+      throw new Error(`Steam store token refresh failed with HTTP ${response.status || "unknown"}.`);
+    }
+    text = await response.text();
+    token = parseStoreWebApiToken(text);
+  }
   if (!token) {
     throw new SteamLoginRequiredError("Steam store token response did not include webapi_token. Log in to Steam again and retry.");
   }
@@ -62,23 +103,152 @@ export async function getStoreAccessToken(options = {}) {
   return cache;
 }
 
-async function fetchStoreAsyncConfig(fetchImpl, initialCookie) {
-  const jar = cookieJarFromHeader(initialCookie);
+async function refreshSteamWebSession(fetchImpl, initialCookieExport, dataDir) {
+  let cookieExport = initialCookieExport;
+  const refreshCookie = cookieValueForUrl(cookieExport, STEAM_LOGIN_COOKIE_URL, "steamRefresh_steam");
+  const sessionId = cookieValueForUrl(cookieExport, STEAM_LOGIN_COOKIE_URL, "sessionid")
+    ?? cookieValueForUrl(cookieExport, STEAM_STORE_ASYNC_CONFIG_URL, "sessionid");
+  const nonce = steamTokenFromCookie(refreshCookie);
+  if (!nonce || !sessionId) {
+    throw new SteamLoginRequiredError("Steam refresh session is incomplete. Log in to Steam again and retry.");
+  }
+
+  const finalizeUrl = new URL("/jwt/finalizelogin", STEAM_LOGIN_COOKIE_URL).toString();
+  const response = await fetchImpl(finalizeUrl, {
+    method: "POST",
+    redirect: "manual",
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      Cookie: buildSteamCookieHeaderForUrl(cookieExport, finalizeUrl),
+      Referer: "https://store.steampowered.com/",
+      "User-Agent": BROWSER_USER_AGENT,
+    },
+    body: new URLSearchParams({
+      nonce,
+      sessionid: sessionId,
+      redir: STEAM_STORE_ASYNC_CONFIG_URL,
+    }).toString(),
+  });
+  cookieExport = persistResponseCookies(cookieExport, finalizeUrl, response.headers, dataDir);
+  if (response.status === 401 || response.status === 403) {
+    throw new SteamLoginRequiredError(`Steam web-session refresh was rejected; HTTP ${response.status}.`);
+  }
+  if (!response.ok) {
+    throw new Error(`Steam web-session refresh failed with HTTP ${response.status || "unknown"}.`);
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(await response.text());
+  } catch (error) {
+    throw new Error(`Steam web-session refresh response was not valid JSON: ${error.message}`);
+  }
+  if (Number(payload?.success) === 0 || payload?.success === false) {
+    throw new SteamLoginRequiredError(
+      stringValue(payload?.message) ?? stringValue(payload?.error) ?? "Steam rejected the refresh token.",
+    );
+  }
+
+  const steamId = stringValue(payload?.steamID) ?? steamIdFromCookie(refreshCookie);
+  for (const transfer of Array.isArray(payload?.transfer_info) ? payload.transfer_info : []) {
+    const url = stringValue(transfer?.url);
+    if (!url) continue;
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(transfer?.params ?? {})) {
+      const text = stringValue(value);
+      if (text) params.set(key, text);
+    }
+    if (steamId && !params.has("steamID")) {
+      params.set("steamID", steamId);
+    }
+    const transferResponse = await fetchImpl(url, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        Accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        Cookie: buildSteamCookieHeaderForUrl(cookieExport, url),
+        Referer: finalizeUrl,
+        "User-Agent": BROWSER_USER_AGENT,
+      },
+      body: params.toString(),
+    });
+    cookieExport = persistResponseCookies(cookieExport, url, transferResponse.headers, dataDir);
+    if (transferResponse.status === 401 || transferResponse.status === 403) {
+      throw new SteamLoginRequiredError(`Steam web-session transfer was rejected; HTTP ${transferResponse.status}.`);
+    }
+    if (!transferResponse.ok && !isRedirectStatus(transferResponse.status)) {
+      throw new Error(`Steam web-session transfer failed with HTTP ${transferResponse.status || "unknown"}.`);
+    }
+  }
+  return cookieExport;
+}
+
+function persistResponseCookies(cookieExport, url, headers, dataDir) {
+  const updated = applySteamResponseCookies(cookieExport, url, headers);
+  if (updated.changed) {
+    saveSessionCookieExport(dataDir, updated.cookieExport);
+  }
+  return updated.cookieExport;
+}
+
+function cookieValueForUrl(cookieExport, url, name) {
+  const header = buildSteamCookieHeaderForUrl(cookieExport, url);
+  for (const part of header.split(";")) {
+    const text = part.trim();
+    const index = text.indexOf("=");
+    if (index > 0 && text.slice(0, index).trim().toLowerCase() === name.toLowerCase()) {
+      return text.slice(index + 1).trim();
+    }
+  }
+  return undefined;
+}
+
+function steamTokenFromCookie(value) {
+  let decoded = stringValue(value);
+  if (!decoded) return undefined;
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    // Steam also accepts the raw JWT when the cookie is not percent encoded.
+  }
+  const marker = decoded.indexOf("||");
+  return marker >= 0 ? stringValue(decoded.slice(marker + 2)) : decoded;
+}
+
+function steamIdFromCookie(value) {
+  let decoded = String(value ?? "");
+  try {
+    decoded = decodeURIComponent(decoded);
+  } catch {
+    // Fall through to the raw cookie form.
+  }
+  return decoded.match(/^(\d{16,20})\|\|/)?.[1];
+}
+
+async function fetchStoreAsyncConfig(fetchImpl, initialCookieExport, dataDir) {
+  let cookieExport = initialCookieExport;
   let url = STEAM_STORE_ASYNC_CONFIG_URL;
   for (let redirectCount = 0; redirectCount <= MAX_TOKEN_REFRESH_REDIRECTS; redirectCount += 1) {
+    const cookie = buildSteamCookieHeaderForUrl(cookieExport, url);
     const response = await fetchImpl(url, {
       method: "GET",
       redirect: "manual",
       headers: {
         Accept: "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
-        Cookie: cookieHeaderFromJar(jar),
+        ...(cookie ? { Cookie: cookie } : {}),
         Referer: "https://store.steampowered.com/points/shop",
         "User-Agent": BROWSER_USER_AGENT,
         "X-Requested-With": "XMLHttpRequest",
       },
     });
-    applySetCookieHeaders(jar, response.headers);
+    const updated = applySteamResponseCookies(cookieExport, url, response.headers);
+    cookieExport = updated.cookieExport;
+    if (updated.changed) {
+      saveSessionCookieExport(dataDir, cookieExport);
+    }
 
     if (!isRedirectStatus(response.status)) {
       return response;
@@ -181,84 +351,6 @@ function findWebApiToken(value) {
     }
   }
   return undefined;
-}
-
-function cookieJarFromHeader(header) {
-  const jar = new Map();
-  for (const part of String(header ?? "").split(";")) {
-    const text = part.trim();
-    const index = text.indexOf("=");
-    if (index <= 0) {
-      continue;
-    }
-    jar.set(text.slice(0, index), text.slice(index + 1));
-  }
-  return jar;
-}
-
-function cookieHeaderFromJar(jar) {
-  return [...jar.entries()]
-    .filter(([name, value]) => name && value !== undefined)
-    .map(([name, value]) => `${name}=${value}`)
-    .join("; ");
-}
-
-function applySetCookieHeaders(jar, headers) {
-  for (const header of setCookieHeaders(headers)) {
-    const pair = String(header).split(";")[0];
-    const index = pair.indexOf("=");
-    if (index <= 0) {
-      continue;
-    }
-    const name = pair.slice(0, index).trim();
-    const value = pair.slice(index + 1).trim();
-    if (!name) {
-      continue;
-    }
-    if (!value || deletesCookie(header)) {
-      jar.delete(name);
-    } else {
-      jar.set(name, value);
-    }
-  }
-}
-
-function setCookieHeaders(headers) {
-  if (typeof headers?.getSetCookie === "function") {
-    return headers.getSetCookie();
-  }
-  const header = headers?.get?.("set-cookie");
-  return header ? splitCombinedSetCookieHeader(header) : [];
-}
-
-function splitCombinedSetCookieHeader(header) {
-  const parts = [];
-  let start = 0;
-  let inExpires = false;
-  const text = String(header);
-  for (let index = 0; index < text.length; index += 1) {
-    const rest = text.slice(index);
-    if (rest.toLowerCase().startsWith("expires=")) {
-      inExpires = true;
-      index += "expires=".length - 1;
-      continue;
-    }
-    if (inExpires && text[index] === ";") {
-      inExpires = false;
-      continue;
-    }
-    if (!inExpires && text[index] === ",") {
-      parts.push(text.slice(start, index).trim());
-      start = index + 1;
-    }
-  }
-  parts.push(text.slice(start).trim());
-  return parts.filter(Boolean);
-}
-
-function deletesCookie(header) {
-  return /;\s*max-age=0(?:;|$)/i.test(header)
-    || /;\s*expires=Thu,\s*01 Jan 1970/i.test(header);
 }
 
 function isRedirectStatus(status) {

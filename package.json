@@ -1,6 +1,6 @@
 {
   "name": "game-library-plugin-steam-import-node",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "private": true,
   "type": "module",
   "description": "JSON-RPC Steam import, account-library, family-sharing, and launch provider for Game Library Client.",

@@ -1,7 +1,7 @@
 {
   "id": "community.steam_import_node",
   "name": "Steam Import Node Provider",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "author": "Game Library Client Community",
   "description": "JSON-RPC provider that scans installed Steam libraries, imports logged-in Steam account and family-shared games, and launches through steam:// URLs.",
   "logoPath": "logo.svg",
@@ -20,6 +20,7 @@
   ],
   "allowedDomains": [
     "api.steampowered.com",
+    "login.steampowered.com",
     "store.steampowered.com",
     "steamcommunity.com"
   ],

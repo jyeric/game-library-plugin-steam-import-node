@@ -8,10 +8,12 @@ import { hasLoginCookies } from "../src/auth/steam-auth.mjs";
 import { handleAction, ACCOUNT_PROVIDER_ID } from "../src/jsonrpc/handleAction.mjs";
 import { parseStoreWebApiToken, decodeSteamAccessToken, getStoreAccessToken } from "../src/steam/accessToken.mjs";
 import { readSteamAccountGames } from "../src/steam/accountLibrary.mjs";
-import { buildSteamStoreCookieHeader } from "../src/steam/cookies.mjs";
+import { buildSteamCookieHeaderForUrl, buildSteamStoreCookieHeader } from "../src/steam/cookies.mjs";
 import {
   beginSteamLogin,
   completeSteamLogin,
+  loadSessionCookieExport,
+  markSteamLoginRequired,
   sessionFilePath,
   steamSessionStatus,
   writeJsonPrivate,
@@ -76,6 +78,112 @@ describe("Steam store access tokens", () => {
     assert.equal(result.steamId, "76561198000000001");
   });
 
+  it("uses login-domain refresh cookies and persists renewed store login cookies", async () => {
+    const dataDir = tempDataDir();
+    const token = fakeSteamToken("76561198000000001", 1893456000);
+    writeJsonPrivate(sessionFilePath(dataDir), {
+      exportedAt: new Date().toISOString(),
+      cookies: [
+        {
+          name: "steamRefresh_steam",
+          value: "76561198000000001%7C%7Crefresh-cookie",
+          domain: "login.steampowered.com",
+          path: "/",
+          expires: Math.floor(Date.now() / 1000) + 86400,
+        },
+        { name: "sessionid", value: "store-session", domain: ".steampowered.com", path: "/" },
+      ],
+    });
+
+    const seen = [];
+    const fetchImpl = async (url, options) => {
+      seen.push([url, options.headers.Cookie ?? ""]);
+      if (seen.length === 1) {
+        assert.equal(url, "https://login.steampowered.com/jwt/finalizelogin");
+        assert.equal(options.method, "POST");
+        assert.match(options.headers.Cookie, /steamRefresh_steam=76561198000000001%7C%7Crefresh-cookie/);
+        assert.match(options.body, /nonce=refresh-cookie/);
+        assert.match(options.body, /sessionid=store-session/);
+        return jsonResponse({
+          success: true,
+          steamID: "76561198000000001",
+          transfer_info: [{
+            url: "https://store.steampowered.com/login/settoken",
+            params: { nonce: "transfer-nonce", auth: "transfer-auth" },
+          }],
+        });
+      }
+      if (seen.length === 2) {
+        assert.equal(url, "https://store.steampowered.com/login/settoken");
+        assert.equal(options.method, "POST");
+        assert.match(options.body, /steamID=76561198000000001/);
+        return new Response("", {
+          status: 200,
+          headers: {
+            "set-cookie": "steamLoginSecure=renewed-login; Domain=.steampowered.com; Path=/; Secure; HttpOnly",
+          },
+        });
+      }
+      assert.equal(url, "https://store.steampowered.com/pointssummary/ajaxgetasyncconfig");
+      assert.match(options.headers.Cookie, /steamLoginSecure=renewed-login/);
+      return jsonResponse({ success: 1, data: { webapi_token: token } });
+    };
+
+    const result = await getStoreAccessToken({ dataDir, fetchImpl, forceRefresh: true });
+    const saved = loadSessionCookieExport(dataDir);
+
+    assert.equal(result.token, token);
+    assert.match(buildSteamStoreCookieHeader(saved), /steamLoginSecure=renewed-login/);
+    assert.match(
+      buildSteamCookieHeaderForUrl(saved, "https://login.steampowered.com/jwt/finalizelogin"),
+      /steamRefresh_steam=76561198000000001%7C%7Crefresh-cookie/,
+    );
+  });
+
+  it("refreshes the web session once when Steam rejects a stale store login cookie", async () => {
+    const dataDir = tempDataDir();
+    const token = fakeSteamToken("76561198000000001", 1893456000);
+    writeJsonPrivate(sessionFilePath(dataDir), {
+      exportedAt: new Date().toISOString(),
+      cookies: [
+        { name: "steamLoginSecure", value: "stale-login", domain: ".steampowered.com", path: "/" },
+        { name: "steamRefresh_steam", value: "76561198000000001%7C%7Crefresh-cookie", domain: "login.steampowered.com", path: "/" },
+        { name: "sessionid", value: "store-session", domain: ".steampowered.com", path: "/" },
+      ],
+    });
+
+    let call = 0;
+    const fetchImpl = async (url, options) => {
+      call += 1;
+      if (call === 1) {
+        assert.equal(url, "https://store.steampowered.com/pointssummary/ajaxgetasyncconfig");
+        assert.match(options.headers.Cookie, /steamLoginSecure=stale-login/);
+        return new Response("", { status: 401 });
+      }
+      if (call === 2) {
+        assert.equal(url, "https://login.steampowered.com/jwt/finalizelogin");
+        return jsonResponse({
+          success: true,
+          steamID: "76561198000000001",
+          transfer_info: [{ url: "https://store.steampowered.com/login/settoken", params: { nonce: "n" } }],
+        });
+      }
+      if (call === 3) {
+        return new Response("", {
+          status: 200,
+          headers: { "set-cookie": "steamLoginSecure=fresh-login; Domain=.steampowered.com; Path=/; Secure; HttpOnly" },
+        });
+      }
+      assert.equal(call, 4);
+      assert.match(options.headers.Cookie, /steamLoginSecure=fresh-login/);
+      return jsonResponse({ webapi_token: token });
+    };
+
+    const result = await getStoreAccessToken({ dataDir, fetchImpl, forceRefresh: true });
+    assert.equal(result.token, token);
+    assert.equal(call, 4);
+  });
+
   it("builds store cookie headers without login-domain cookies", () => {
     const header = buildSteamStoreCookieHeader({
       cookies: [
@@ -116,6 +224,7 @@ describe("Steam plugin manifest", () => {
     assert.equal(manifest.hostApis.includes("tools.requestReviewedCommand"), true);
     assert.equal(manifest.hostApis.includes("http.fetchAllowed"), true);
     assert.equal(manifest.permissions.includes("http-cookie-session"), true);
+    assert.equal(manifest.allowedDomains.includes("login.steampowered.com"), true);
     assert.equal(manifest.dependencies.runtimes[0].versionRequirement, ">=20 <25");
     assert.equal(
       manifest.dependencies.runtimes[0].install.url,
@@ -183,6 +292,28 @@ describe("Steam account session status", () => {
     } finally {
       restoreEnv("GAME_LIBRARY_PLUGIN_DATA_DIR", previous);
     }
+  });
+
+  it("keeps a refreshable browser session logged in even after an access-cookie failure marker", () => {
+    const dataDir = tempDataDir();
+    writeJsonPrivate(sessionFilePath(dataDir), {
+      exportedAt: new Date().toISOString(),
+      cookies: [
+        {
+          name: "steamRefresh_steam",
+          value: "76561198000000001%7C%7Crefresh-cookie",
+          domain: "login.steampowered.com",
+          path: "/",
+          expires: Math.floor(Date.now() / 1000) + 86400,
+        },
+        { name: "sessionid", value: "store-session", domain: ".steampowered.com", path: "/" },
+      ],
+    });
+    markSteamLoginRequired(dataDir);
+
+    const status = steamSessionStatus(dataDir);
+    assert.equal(status.loggedIn, true);
+    assert.equal(status.message, "Steam browser session can be refreshed.");
   });
 
   it("keeps login pending until a newly captured session replaces the rejected one", async () => {

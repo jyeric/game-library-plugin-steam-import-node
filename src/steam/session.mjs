@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hasUsableSteamRefreshCookie } from "./cookies.mjs";
 
 const SESSION_FILE_NAME = "steam-session.json";
 const TOKEN_CACHE_FILE_NAME = "steam-token.json";
@@ -49,19 +50,21 @@ export function steamSessionStatus(dataDir) {
       };
     }
   }
-  if (loginState?.state === "required") {
+  const session = loadSessionCookieExport(dataDir);
+  const loginCookie = session?.cookies?.find(
+    (cookie) => String(cookie?.name).toLowerCase() === "steamloginsecure",
+  );
+  const headerValue = loginCookie?.value ?? steamLoginSecureFromHeaders(session?.cookieHeaderByUrl);
+  const refreshable = hasUsableSteamRefreshCookie(session);
+
+  if (loginState?.state === "required" && !refreshable) {
     return {
       loggedIn: false,
       message: "Steam browser login has expired.",
     };
   }
 
-  const session = loadSessionCookieExport(dataDir);
-  const loginCookie = session?.cookies?.find(
-    (cookie) => String(cookie?.name).toLowerCase() === "steamloginsecure",
-  );
-  const headerValue = loginCookie?.value ?? steamLoginSecureFromHeaders(session?.cookieHeaderByUrl);
-  if (!headerValue || cookieExpired(loginCookie?.expires)) {
+  if ((!headerValue || cookieExpired(loginCookie?.expires)) && !refreshable) {
     return {
       loggedIn: false,
       message: "Steam browser login is required.",
@@ -72,7 +75,9 @@ export function steamSessionStatus(dataDir) {
   return {
     loggedIn: true,
     accountId: stringValue(token?.steamId) ?? steamIdFromLoginCookie(headerValue),
-    message: "Steam browser session is ready.",
+    message: headerValue && !cookieExpired(loginCookie?.expires)
+      ? "Steam browser session is ready."
+      : "Steam browser session can be refreshed.",
   };
 }
 
@@ -104,6 +109,11 @@ export function completeSteamLogin(dataDir, session) {
   writeJsonPrivate(sessionFilePath(dataDir), session);
   removePrivateFile(tokenCacheFilePath(dataDir));
   removePrivateFile(loginStateFilePath(dataDir));
+}
+
+/** Replaces the persisted Steam web-session cookie export after a successful refresh. */
+export function saveSessionCookieExport(dataDir, session) {
+  writeJsonPrivate(sessionFilePath(dataDir), session);
 }
 
 /** Clears a stale login-required marker after a verified account-library request succeeds. */
