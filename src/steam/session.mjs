@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { hasUsableSteamRefreshCookie } from "./cookies.mjs";
 
 const SESSION_FILE_NAME = "steam-session.json";
@@ -172,8 +172,7 @@ function dataDirRoot(dataDir) {
   if (value) {
     return value;
   }
-  const current = dirname(fileURLToPath(import.meta.url));
-  return resolve(current, "..", "..", ".session");
+  return join(homedir(), ".game-library-steam");
 }
 
 function stringValue(value) {

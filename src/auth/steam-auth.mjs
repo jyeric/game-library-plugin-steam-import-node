@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
+import { findBrowserExecutable } from "./browserExecutable.mjs";
 
 import {
   STEAM_STORE_ASYNC_CONFIG_URL,
@@ -13,7 +14,7 @@ import {
   compactCookiePairs,
 } from "../steam/cookies.mjs";
 import { decodeSteamAccessToken, parseStoreWebApiToken } from "../steam/accessToken.mjs";
-import { beginSteamLogin, completeSteamLogin } from "../steam/session.mjs";
+import { beginSteamLogin, completeSteamLogin, markSteamLoginRequired } from "../steam/session.mjs";
 
 const LOGIN_URL = "https://store.steampowered.com/login/?redir=pointssummary%2Fajaxgetasyncconfig&redir_ssl=1";
 const BLANK_URL = "about:blank";
@@ -101,21 +102,6 @@ function browserArgs(port, profileDir, url) {
     args.splice(4, 0, `--proxy-server=${proxy}`);
   }
   return args;
-}
-
-function findBrowserExecutable() {
-  const candidates = process.platform === "win32"
-    ? [
-        process.env.MSEDGE,
-        join(process.env.ProgramFiles ?? "", "Microsoft", "Edge", "Application", "msedge.exe"),
-        join(process.env["ProgramFiles(x86)"] ?? "", "Microsoft", "Edge", "Application", "msedge.exe"),
-        join(process.env.LOCALAPPDATA ?? "", "Microsoft", "Edge", "Application", "msedge.exe"),
-        join(process.env.ProgramFiles ?? "", "Google", "Chrome", "Application", "chrome.exe"),
-        join(process.env["ProgramFiles(x86)"] ?? "", "Google", "Chrome", "Application", "chrome.exe"),
-        join(process.env.LOCALAPPDATA ?? "", "Google", "Chrome", "Application", "chrome.exe"),
-      ]
-    : ["microsoft-edge", "google-chrome", "chromium", "chromium-browser"];
-  return candidates.filter(Boolean).find((candidate) => existsSync(candidate));
 }
 
 async function connectToFirstPage(port) {
@@ -411,6 +397,7 @@ function decodeWebSocketFrame(buffer) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
+    markSteamLoginRequired(parseArgs(process.argv.slice(2)).dataDir ?? join(homedir(), ".game-library-steam"));
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[steam-auth] ${message}`);
     process.exitCode = 1;

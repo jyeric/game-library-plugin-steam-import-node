@@ -20,7 +20,7 @@ export function detectSteamRoot({
     };
   }
 
-  const registryRoot = detectWindowsSteamRootFromRegistry(execFileSync);
+  const registryRoot = detectWindowsSteamRootFromRegistry(execFileSync, env);
   if (registryRoot) {
     return { root: registryRoot, source: "windows-registry" };
   }
@@ -37,7 +37,7 @@ export function detectSteamRoot({
   };
 }
 
-function detectWindowsSteamRootFromRegistry(execFileSync) {
+function detectWindowsSteamRootFromRegistry(execFileSync, env) {
   const keys = [
     ["HKCU\\Software\\Valve\\Steam", "SteamPath"],
     ["HKLM\\Software\\Valve\\Steam", "InstallPath"],
@@ -46,9 +46,11 @@ function detectWindowsSteamRootFromRegistry(execFileSync) {
 
   for (const [key, valueName] of keys) {
     try {
-      const output = execFileSync("reg", ["query", key, "/v", valueName], {
+      const executable = env.SystemRoot ? path.join(env.SystemRoot, "System32", "reg.exe") : "reg";
+      const output = execFileSync(executable, ["query", key, "/v", valueName], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
       });
       const match = output.match(new RegExp(`${valueName}\\s+REG_\\w+\\s+(.+)`, "i"));
       const root = normalizeExistingPath(match?.[1]?.trim());
@@ -64,7 +66,9 @@ function detectWindowsSteamRootFromRegistry(execFileSync) {
 }
 
 function detectWindowsSteamRootFromProgramFiles(env) {
-  const baseDirs = [env["ProgramFiles(x86)"], env.ProgramFiles].filter(Boolean);
+  const drive = env.SystemRoot ? path.win32.parse(env.SystemRoot).root : null;
+  const baseDirs = [env["ProgramFiles(x86)"], env.ProgramFiles,
+    ...(drive ? [path.win32.join(drive, "Program Files (x86)"), path.win32.join(drive, "Program Files")] : [])].filter(Boolean);
   for (const baseDir of baseDirs) {
     const root = normalizeExistingPath(path.join(baseDir, "Steam"));
     if (root) {

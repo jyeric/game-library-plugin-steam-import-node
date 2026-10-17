@@ -12,21 +12,20 @@ import {
   readSteamAccountGames,
 } from "../steam/accountLibrary.mjs";
 import { isSteamLoginRequiredError } from "../steam/accessToken.mjs";
+import { launchSteamLogin } from "../auth/launchLogin.mjs";
 import {
   markSteamLoginRequired,
   markSteamLoginPending,
   steamSessionStatus,
 } from "../steam/session.mjs";
 
-const LOGIN_REQUIRED_MESSAGE =
-  "Steam browser login is required. Confirm the Steam browser login command, complete login, then retry.";
 const LOGIN_PENDING_MESSAGE = "Steam browser login opened. Complete login to continue the account import.";
 
 export async function handleAction(id, params, context = {}) {
   try {
     switch (params?.actionId) {
       case "login":
-        return await login(id, params?.payload ?? {});
+        return await login(id, context);
       case "account-status":
         return accountStatus(id);
       case "detect-libraries":
@@ -91,17 +90,20 @@ async function readAccountCandidates(id, payload, context) {
   }
 }
 
-function login(id, payload) {
-  if (hostResult(payload, "tools.requestReviewedCommand")) {
-    return response(id, "accounts.acceptStatus", {
-      providerId: ACCOUNT_PROVIDER_ID,
-      loggedIn: false,
-      pending: true,
-      message: LOGIN_PENDING_MESSAGE,
-    });
-  }
+async function login(id, context) {
   markSteamLoginPending();
-  return requestAuthCommand(id, ACCOUNT_PROVIDER_ID);
+  try {
+    await (context.launchLogin ?? launchSteamLogin)();
+  } catch (error) {
+    markSteamLoginRequired();
+    throw error;
+  }
+  return response(id, "accounts.acceptStatus", {
+    providerId: ACCOUNT_PROVIDER_ID,
+    loggedIn: false,
+    pending: true,
+    message: LOGIN_PENDING_MESSAGE,
+  });
 }
 
 function accountStatus(id) {
@@ -137,7 +139,7 @@ function extractSteamAppId(payload) {
     return String(fromExternalIds);
   }
 
-  for (const value of [option?.url, option?.executable, option?.path, game?.executable]) {
+  for (const value of [option?.value, option?.url, option?.executable, option?.path, game?.executable]) {
     const fromUrl = extractSteamAppIdFromUrl(value);
     if (fromUrl) {
       return fromUrl;
@@ -161,16 +163,6 @@ function isSteamAppId(value) {
     : false;
 }
 
-function requestAuthCommand(id, providerId) {
-  return response(id, "tools.requestReviewedCommand", {
-    toolId: "steam-auth",
-    commandId: "auth",
-    providerId,
-    variables: {},
-    message: LOGIN_REQUIRED_MESSAGE,
-  });
-}
-
 function loginRequiredError(id, error) {
   const message = error instanceof Error && error.message
     ? error.message
@@ -181,17 +173,6 @@ function loginRequiredError(id, error) {
       providerId: ACCOUNT_PROVIDER_ID,
     },
   });
-}
-
-function hostResult(payload, hostApi) {
-  const result = payload?.runtimeHostResult;
-  if (!result) {
-    return undefined;
-  }
-  if (hostApi && result.hostApi !== hostApi) {
-    return undefined;
-  }
-  return result.payload;
 }
 
 function errorMessage(error) {

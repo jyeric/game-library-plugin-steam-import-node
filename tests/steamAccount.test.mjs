@@ -215,59 +215,23 @@ describe("Steam store access tokens", () => {
 });
 
 describe("Steam plugin manifest", () => {
-  it("declares the Steam family, concrete providers, logo, and reviewed login command", () => {
+  it("declares only current json-rpc/1 fields and legal provider identities", () => {
     const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
-
     assert.equal(manifest.logoPath, "logo.svg");
-    assert.equal(manifest.providerFamilies, undefined);
-    assert.equal(manifest.dependencies.runnerVersion, "json-rpc-stdio-v2");
-    assert.equal(manifest.hostApis.includes("tools.requestReviewedCommand"), true);
-    assert.equal(manifest.hostApis.includes("http.fetchAllowed"), true);
-    assert.equal(manifest.permissions.includes("http-cookie-session"), true);
-    assert.equal(manifest.allowedDomains.includes("login.steampowered.com"), true);
-    assert.equal(manifest.dependencies.runtimes[0].versionRequirement, ">=20 <25");
-    assert.equal(
-      manifest.dependencies.runtimes[0].install.url,
-      "https://nodejs.org/dist/v22.23.1/node-v22.23.1-win-x64.zip",
-    );
-    assert.equal(manifest.dependencies.runtimes[0].install.version, "22.23.1");
-    assert.equal(manifest.externalTools[0].id, "steam-auth");
-    assert.equal(manifest.externalTools[0].executablePath, "<NODE_EXE>");
-    assert.deepEqual(
-      manifest.providers.map((provider) => [provider.id, provider.capabilities]),
-      [
-        ["community.steam_import_node:import", ["import"]],
-        ["community.steam_import_node:account", ["account-import"]],
-        ["community.steam_import_node:launch", ["launch"]],
-      ],
-    );
-    assert.equal(
-      manifest.providers.every(
-        (provider) => provider.familyId === "steam",
-      ),
-      true,
-    );
-    assert.equal(
-      manifest.runtimeActions.find((action) => action.id === "read-account-candidates")?.hostApi,
-      "accounts.acceptCandidates",
-    );
-    assert.deepEqual(
-      manifest.runtimeActions.find((action) => action.id === "read-account-candidates")?.intermediateHostApis,
-      ["http.fetchAllowed"],
-    );
-    assert.equal(manifest.hostApis.includes("accounts.acceptStatus"), true);
-    assert.equal(
-      manifest.runtimeActions.find((action) => action.id === "account-status")?.hostApi,
-      "accounts.acceptStatus",
-    );
-    assert.deepEqual(
-      manifest.providers.find((provider) => provider.id === ACCOUNT_PROVIDER_ID)?.runtimeActions,
-      {
-        "accounts.readCandidates": "read-account-candidates",
-        "accounts.status": "account-status",
-        "accounts.login": "login",
-      },
-    );
+    assert.equal(manifest.schemaVersion, 1);
+    assert.equal(manifest.protocol, "json-rpc/1");
+    assert.deepEqual(manifest.runtime, { kind: "node", version: "22.22.0" });
+    assert.equal(manifest.entry, "runtime/provider.mjs");
+    assert.equal(manifest.dependencies, undefined);
+    assert.equal(manifest.providers, undefined);
+    assert.equal(manifest.externalTools, undefined);
+    for (const capability of manifest.capabilities) {
+      assert.match(capability.providerId, /^[a-zA-Z0-9._-]+$/);
+      assert.ok(manifest.actions.some(action => action.id === capability.action));
+    }
+    assert.equal(manifest.capabilities.find(c => c.capability === "accounts.status").providerId, ACCOUNT_PROVIDER_ID);
+    assert.ok(manifest.actions.every(action => action.hostMethods.length === 0));
+    assert.deepEqual(JSON.parse(readFileSync(new URL("../manifest.template.json", import.meta.url), "utf8")), manifest);
   });
 });
 
@@ -359,13 +323,8 @@ describe("Steam account session status", () => {
       });
       const result = await handleAction("steam-login-started", {
         actionId: "login",
-        payload: {
-          runtimeHostResult: {
-            hostApi: "tools.requestReviewedCommand",
-            payload: { success: true },
-          },
-        },
-      });
+        payload: {},
+      }, { launchLogin: async () => {} });
       assert.deepEqual(result.result, {
         hostApi: "accounts.acceptStatus",
         payload: {
@@ -521,7 +480,7 @@ describe("Steam account and family library import", () => {
     assert.equal(shared.artwork.banner.externalId, "30");
     assert.equal(shared.artwork.banner.cachedPath, shared.bannerUrl);
     assert.equal(shared.path, "steam://install/30");
-    assert.equal(shared.executable, "steam://install/30");
+    assert.equal(shared.executable, null);
     assert.deepEqual(shared.networkManifest.launchOptions, []);
     assert.deepEqual(shared.externalIdProvenance.steam.ownerSteamIds, ["76561198000000003"]);
   });

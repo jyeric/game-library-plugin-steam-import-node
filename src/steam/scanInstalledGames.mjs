@@ -65,6 +65,11 @@ export function steamGameToImportCandidate(game) {
     path: game.installPath,
     installDir: game.installPath,
     executable: game.launchUrl,
+    launchConfiguration: [{
+      id: `steam-${game.appid}`, providerId: "steam", label: "Steam",
+      kind: "url", value: game.launchUrl, arguments: [],
+      tracking: { installDirectory: game.installPath },
+    }],
     externalIds: {
       steam: game.appid,
     },

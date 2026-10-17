@@ -1,384 +1,136 @@
-import assert from "node:assert/strict";
-import { describe, it } from "node:test";
-import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import assert from 'node:assert/strict';
+import { describe, it, after } from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { EventEmitter } from 'node:events';
+import { launchSteamLogin } from '../src/auth/launchLogin.mjs';
+import { handleAction } from '../src/jsonrpc/handleAction.mjs';
+import { sessionFilePath, tokenCacheFilePath, steamSessionStatus, writeJsonPrivate } from '../src/steam/session.mjs';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const pluginRoot = path.resolve(__dirname, "..");
-const fixtureSteamRoot = path.join(__dirname, "fixtures", "Steam");
-const runtimeEntry = path.join(pluginRoot, "runtime", "provider.mjs");
-
-describe("Node JSON-RPC runtime host compatibility", () => {
-  it("returns parseable JSON for detect-libraries", () => {
-    const response = executeRuntime({
-      id: "detect-libraries",
-      params: {
-        actionId: "detect-libraries",
-        payload: {},
-      },
-    });
-
-    assert.equal(response.result.hostApi, "imports.acceptLibraries");
-    assert.equal(response.result.payload.providerId, "community.steam_import_node:import");
-    assert.equal(response.result.payload.libraries.length, 1);
-    assert.equal(response.result.payload.libraries[0].manifestCount, 2);
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const fixture = path.join(root, 'tests/fixtures/Steam');
+const manifest = JSON.parse(readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+const dirs = [];
+after(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }); });
+function temp() { const dir = mkdtempSync(path.join(tmpdir(), 'steam-jsonrpc1-')); dirs.push(dir); return dir; }
+const init = (params = {}) => ({ jsonrpc: '2.0', id: 'init', method: 'plugin.initialize', params: { protocolVersion: 1, pluginId: manifest.id, ...params } });
+const invoke = (action, input = {}, params = {}) => ({ jsonrpc: '2.0', id: 'run', method: 'action.invoke', params: { action, input, invocationId: 'fixture-invocation', operationKey: 'fixture-operation', ...params } });
+function run(frames, { dataDir = temp(), preload = '', clearEnv = false } = {}) {
+  const args = preload ? ['--import', `data:text/javascript,${encodeURIComponent(preload)}`] : [];
+  const result = spawnSync(process.execPath, [...args, path.join(root, 'runtime/provider.mjs')], {
+    cwd: path.join(root, 'runtime'), timeout: 10000, maxBuffer: 3 * 1024 * 1024,
+    input: frames.map(frame => typeof frame === 'string' ? frame : JSON.stringify(frame)).join('\n') + '\n',
+    env: { ...(clearEnv ? { SystemRoot: process.env.SystemRoot } : process.env), GAME_LIBRARY_PLUGIN_DATA_DIR: dataDir, STEAM_ROOT: fixture },
   });
+  assert.equal(result.status, 0, result.stderr.toString());
+  return result.stdout.toString().trim().split(/\r?\n/).map(line => JSON.parse(line));
+}
 
-  it("returns parseable JSON for read-candidates with a normal path", () => {
-    const response = executeRuntime({
-      id: "read-candidates",
-      params: {
-        actionId: "read-candidates",
-        payload: { libraries: [{ path: fixtureSteamRoot }] },
-      },
-    });
-
-    assert.equal(response.result.hostApi, "imports.acceptCandidates");
-    assert.equal(response.result.payload.candidates.length, 2);
-    const candidate = response.result.payload.candidates.find((item) => item.externalIds.steam === "2403320");
-    assert.ok(candidate);
-    assert.equal(candidate.artwork.banner.source, "provider");
-    assert.equal(candidate.artwork.banner.providerId, "steam");
-    assert.equal(candidate.artwork.banner.externalId, "2403320");
-    assert.equal(candidate.artwork.banner.cachedPath, candidate.bannerUrl);
+describe('json-rpc/1 host compatibility', () => {
+  it('negotiates every declared action and returns direct results', () => {
+    const [initialized, result] = run([init(), invoke('detect-libraries')], { clearEnv: true });
+    assert.deepEqual(initialized.result, { protocolVersion: 1, pluginId: manifest.id, actions: manifest.actions.map(a => a.id) });
+    assert.equal(result.id, 'run');
+    assert.equal(result.result.providerId, 'community.steam_import_node.import');
+    assert.equal(result.result.libraries[0].manifestCount, 2);
+    assert.equal(result.result.hostApi, undefined);
   });
-
-  it("ignores stale wrapper stdin files and answers the live request id", () => {
-    const staleDir = mkdtempSync(path.join(tmpdir(), "steam-runtime-stale-"));
-    try {
-      const staleRequest = path.join(staleDir, "request.json");
-      writeFileSync(
-        staleRequest,
-        JSON.stringify({
-          jsonrpc: "2.0",
-          id: "stale-id",
-          method: "executeAction",
-          params: {
-            pluginId: "community.steam_import_node",
-            actionId: "detect-libraries",
-            payload: {},
-            hostApis: [],
-          },
-        }),
-        "utf8",
-      );
-
-      const response = executeRuntime(
-        {
-          id: "live-id",
-          params: {
-            actionId: "resolve-launch",
-            payload: {
-              game: { externalIds: { steam: "730" } },
-              option: {},
-            },
-          },
-        },
-        {
-          STEAM_IMPORT_PLUGIN_STDIN_FILE: staleRequest,
-          STEAM_IMPORT_PLUGIN_STDOUT_FILE: path.join(staleDir, "response.json"),
-        },
-      );
-
-      assert.equal(response.id, "live-id");
-      assert.equal(response.result.hostApi, "launch.acceptResolution");
-      assert.equal(response.result.payload.canHandle, true);
-    } finally {
-      rmSync(staleDir, { recursive: true, force: true });
+  it('discovers selected libraries using the actual import.input/1 shape', () => {
+    const [, result] = run([init(), invoke('discover', { providerId: 'community.steam_import_node.import', input: { 'selected-libraries': { paths: [fixture] } }, schema: 'import.input/1' })]);
+    assert.equal(result.result.candidates.length, 2);
+    const game = result.result.candidates.find(c => c.externalIds.steam === '730');
+    assert.equal(game.launchConfiguration[0].value, 'steam://rungameid/730');
+    assert.equal(game.launchConfiguration[0].tracking.installDirectory, game.path);
+  });
+  it('supports default discovery and existing read-candidates domain calls', () => {
+    for (const action of ['discover', 'read-candidates']) {
+      const [, result] = run([init(), invoke(action)]);
+      assert.equal(result.result.candidates.length, 2);
     }
   });
-
-  it("returns parseable JSON for launch resolution and launch requests", () => {
-    const payload = {
-      game: {
-        id: "game-1",
-        title: "Counter-Strike 2",
-        externalIds: { steam: "730" },
-      },
-      option: {
-        providerId: "community.steam_import_node:launch",
-      },
-    };
-
-    const resolution = executeRuntime({
-      id: "resolve-launch",
-      params: {
-        actionId: "resolve-launch",
-        payload,
-      },
-    });
-    assert.equal(resolution.result.hostApi, "launch.acceptResolution");
-    assert.equal(resolution.result.payload.canHandle, true);
-
-    const launch = executeRuntime({
-      id: "request-launch",
-      params: {
-        actionId: "request-launch",
-        payload,
-      },
-    });
-    assert.equal(launch.result.hostApi, "launch.acceptRequest");
-    assert.equal(launch.result.payload.url, "steam://rungameid/730");
+  it('returns status without credentials or mutating approved code', () => {
+    const before = readFileSync(path.join(root, 'manifest.json'));
+    const [, result] = run([init(), invoke('account-status')]);
+    assert.equal(result.result.loggedIn, false);
+    assert.deepEqual(readFileSync(path.join(root, 'manifest.json')), before);
+    assert.equal(existsSync(path.join(root, '.session')), false);
   });
-
-  it("returns login-required without requesting a reviewed command from a background import", () => {
-    const tempRoot = mkdtempSync(path.join(tmpdir(), "steam-runtime-login-required-"));
-    try {
-      const dataDir = path.join(tempRoot, "plugin-data");
-      mkdirSync(dataDir, { recursive: true });
-      const response = executeRuntime(
-        {
-          id: "account-import-login-required",
-          params: {
-            actionId: "read-account-candidates",
-            payload: { providerId: "community.steam_import_node:account" },
-          },
-        },
-        { GAME_LIBRARY_PLUGIN_DATA_DIR: dataDir },
-        { expectResult: false, expectedHostCalls: 0 },
-      );
-
-      assert.equal(response.error.data.messageKey, "error.providerLoginRequired");
-      assert.equal(
-        response.error.data.messageParams.providerId,
-        "community.steam_import_node:account",
-      );
-    } finally {
-      rmSync(tempRoot, { recursive: true, force: true });
-    }
+  it('reports login required without opening a browser in background discovery', () => {
+    const dataDir = temp();
+    const [, result] = run([init(), invoke('read-account-candidates', { input: 'account' })], { dataDir });
+    assert.match(result.error.message, /Steam browser login is required/);
+    assert.equal(result.error.data.messageKey, 'error.providerLoginRequired');
+    assert.equal(steamSessionStatus(dataDir).loggedIn, false);
   });
-
-  it("launches one reviewed login command and returns a pending account status", () => {
-    const tempRoot = mkdtempSync(path.join(tmpdir(), "steam-runtime-login-"));
-    try {
-      const dataDir = path.join(tempRoot, "plugin-data");
-      mkdirSync(dataDir, { recursive: true });
-      const response = executeRuntime(
-        {
-          id: "account-login",
-          params: {
-            actionId: "login",
-            payload: { providerId: "community.steam_import_node:account" },
-          },
-        },
-        { GAME_LIBRARY_PLUGIN_DATA_DIR: dataDir },
-        {
-          expectedHostCalls: 1,
-          expectedHostApis: ["tools.requestReviewedCommand"],
-          hostResponses: [{
-            jsonrpc: "2.0",
-            id: "host-1",
-            result: { payload: { ok: true, messageKey: "command.pluginProcessLaunched" } },
-          }],
-        },
-      );
-
-      assert.equal(response.result.hostApi, "accounts.acceptStatus");
-      assert.deepEqual(response.result.payload, {
-        providerId: "community.steam_import_node:account",
-        loggedIn: false,
-        pending: true,
-        message: "Steam browser login opened. Complete login to continue the account import.",
-      });
-    } finally {
-      rmSync(tempRoot, { recursive: true, force: true });
-    }
+  it('imports owned and family-shared games via native fetch without retired host callbacks', () => {
+    const dataDir = temp();
+    writeJsonPrivate(sessionFilePath(dataDir), { cookies: [{ name: 'steamLoginSecure', value: 'fixture', domain: '.steampowered.com', path: '/' }] });
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: '76561198000000001', exp: 4102444800 })).toString('base64url')}.fixture`;
+    const preload = `globalThis.fetch = async url => {
+      let body;
+      if (String(url).includes('ajaxgetasyncconfig')) body = { webapi_token: ${JSON.stringify(token)} };
+      else if (String(url).includes('GetOwnedGames')) body = { response: { games: [{ appid: 10, name: 'Owned' }] } };
+      else if (String(url).includes('GetFamilyGroupForUser')) body = { response: { family_groupid: '123' } };
+      else if (String(url).includes('GetSharedLibraryApps')) body = { response: { apps: [{ appid: 30, name: 'Shared', owner_steamids: ['76561198000000003'], app_type: 1, exclude_reason: 0 }] } };
+      else throw new Error('Unexpected network request');
+      return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+    };`;
+    const frames = run([init(), invoke('read-account-candidates', { input: 'account' })], { dataDir, preload });
+    assert.equal(frames.length, 2);
+    assert.deepEqual(frames[1].result.candidates.map(c => c.externalIds.steam), ['10', '30']);
+    assert.ok(existsSync(tokenCacheFilePath(dataDir)));
   });
-
-  it("routes account HTTP through the host and keeps the request id on host failure", () => {
-    const tempRoot = mkdtempSync(path.join(tmpdir(), "steam-runtime-async-error-"));
-    try {
-      const dataDir = path.join(tempRoot, "plugin-data");
-      mkdirSync(dataDir, { recursive: true });
-      writeFileSync(
-        path.join(dataDir, "steam-session.json"),
-        JSON.stringify({
-          exportedAt: new Date().toISOString(),
-          cookies: [
-            {
-              name: "steamLoginSecure",
-              value: "session-cookie",
-              domain: ".steampowered.com",
-              path: "/",
-            },
-          ],
-        }),
-        "utf8",
-      );
-      const response = executeRuntime(
-        {
-          id: "community.steam_import_node:read-account-candidates:host-id",
-          params: {
-            actionId: "read-account-candidates",
-            payload: {
-              providerId: "community.steam_import_node:account",
-              options: { parameters: {} },
-            },
-          },
-        },
-        {
-          GAME_LIBRARY_PLUGIN_DATA_DIR: dataDir,
-        },
-        {
-          expectResult: false,
-          expectedHostCalls: 1,
-          hostResponses: [{
-            jsonrpc: "2.0",
-            id: "host-1",
-            error: { code: -32000, message: "simulated host fetch failed" },
-          }],
-        },
-      );
-
-      assert.equal(response.id, "community.steam_import_node:read-account-candidates:host-id");
-      assert.equal(response.error.message, "simulated host fetch failed");
-    } finally {
-      rmSync(tempRoot, { recursive: true, force: true });
-    }
+  it('starts login with the managed interpreter and persistent root', async () => {
+    let args;
+    await launchSteamLogin((...values) => {
+      args = values;
+      const child = new EventEmitter(); child.unref = () => {};
+      queueMicrotask(() => child.emit('spawn')); return child;
+    }, 'C:/fixture/edge.exe');
+    assert.equal(args[0], process.execPath);
+    assert.ok(args[1][0].endsWith('steam-auth.mjs'));
+    assert.equal(args[1][3], path.dirname(sessionFilePath()));
+    assert.equal(args[2].windowsHide, true);
+    await assert.rejects(launchSteamLogin(() => {
+      const child = new EventEmitter(); queueMicrotask(() => child.emit('error', new Error('spawn failed'))); return child;
+    }, 'C:/fixture/edge.exe'), /spawn failed/);
+    await assert.rejects(launchSteamLogin(undefined, null), /Edge or Chrome was not found/);
   });
-
-  it("completes account import through four mediated host HTTP calls", () => {
-    const tempRoot = mkdtempSync(path.join(tmpdir(), "steam-runtime-host-http-"));
+  it('returns pending login over the wire and marks failed starts recoverable', async () => {
+    const dataDir = temp();
+    const preload = `import cp from 'node:child_process'; import {syncBuiltinESMExports} from 'node:module'; import {EventEmitter} from 'node:events';
+      cp.spawn = () => { const child = new EventEmitter(); child.unref = () => {}; queueMicrotask(() => child.emit('spawn')); return child; }; syncBuiltinESMExports();`;
+    const [, result] = run([init(), invoke('login')], { dataDir, preload });
+    assert.equal(result.result.pending, true);
+    assert.equal(steamSessionStatus(dataDir).pending, true);
+    const prior = process.env.GAME_LIBRARY_PLUGIN_DATA_DIR;
+    process.env.GAME_LIBRARY_PLUGIN_DATA_DIR = dataDir;
     try {
-      const dataDir = path.join(tempRoot, "plugin-data");
-      mkdirSync(dataDir, { recursive: true });
-      writeFileSync(
-        path.join(dataDir, "steam-session.json"),
-        JSON.stringify({
-          exportedAt: new Date().toISOString(),
-          cookies: [{
-            name: "steamLoginSecure",
-            value: "session-cookie",
-            domain: ".steampowered.com",
-            path: "/",
-          }],
-        }),
-        "utf8",
-      );
-      const token = fakeSteamToken("76561198000000001");
-      const response = executeRuntime(
-        {
-          id: "account-import-success",
-          params: {
-            actionId: "read-account-candidates",
-            payload: { options: { parameters: { language: "zh-CN" } } },
-          },
-        },
-        { GAME_LIBRARY_PLUGIN_DATA_DIR: dataDir },
-        {
-          expectedHostCalls: 4,
-          assertHostCalls(hostCalls) {
-            assert.equal(hostCalls[0].params.payload.url, "https://store.steampowered.com/pointssummary/ajaxgetasyncconfig");
-            assert.equal(hostCalls[0].params.payload.redirect, "manual");
-            assert.equal(hostCalls[0].params.payload.includeSetCookie, true);
-            assert.match(hostCalls[0].params.payload.headers.cookie, /steamLoginSecure=session-cookie/);
-            assert.match(hostCalls[1].params.payload.url, /IPlayerService\/GetOwnedGames/);
-            assert.match(hostCalls[2].params.payload.url, /IFamilyGroupsService\/GetFamilyGroupForUser/);
-            assert.match(hostCalls[3].params.payload.url, /IFamilyGroupsService\/GetSharedLibraryApps/);
-          },
-          hostResponses: [
-            hostHttpResponse(1, { webapi_token: token }),
-            hostHttpResponse(2, { response: { games: [{ appid: 10, name: "Owned Game" }] } }),
-            hostHttpResponse(3, { response: { family_groupid: "123456" } }),
-            hostHttpResponse(4, {
-              response: {
-                apps: [{
-                  appid: 30,
-                  name: "Shared Game",
-                  owner_steamids: ["76561198000000003"],
-                  exclude_reason: 0,
-                  app_type: 1,
-                }],
-              },
-            }),
-          ],
-        },
-      );
-
-      assert.equal(response.result.hostApi, "accounts.acceptCandidates");
-      assert.deepEqual(
-        response.result.payload.candidates.map((candidate) => candidate.externalIds.steam),
-        ["10", "30"],
-      );
-    } finally {
-      rmSync(tempRoot, { recursive: true, force: true });
-    }
+      const response = await handleAction('failed-login', { actionId: 'login' }, { launchLogin: async () => { throw new Error('spawn failed'); } });
+      assert.equal(response.error.message, 'spawn failed');
+      assert.equal(steamSessionStatus(dataDir).pending, undefined);
+    } finally { if (prior === undefined) delete process.env.GAME_LIBRARY_PLUGIN_DATA_DIR; else process.env.GAME_LIBRARY_PLUGIN_DATA_DIR = prior; }
+  });
+  it('clears pending login if the detached helper fails before opening its browser', () => {
+    const dataDir = temp();
+    writeJsonPrivate(path.join(dataDir, 'steam-login-state.json'), { state: 'pending', startedAt: new Date().toISOString() });
+    const child = spawnSync(process.execPath, [path.join(root, 'src/auth/steam-auth.mjs'), 'invalid', '--data-dir', dataDir], { timeout: 5000 });
+    assert.equal(child.status, 1);
+    assert.equal(steamSessionStatus(dataDir).pending, undefined);
+    assert.equal(steamSessionStatus(dataDir).loggedIn, false);
+  });
+  it('resolves current launch option values and refuses missing Steam identities', () => {
+    const [, resolution, launch, invalid] = run([init(), invoke('resolve-launch', { option: { value: 'steam://rungameid/730' } }), invoke('request-launch', { game: { externalIds: { steam: '730' } } }), invoke('request-launch')]);
+    assert.equal(resolution.result.canHandle, true);
+    assert.equal(launch.result.url, 'steam://rungameid/730');
+    assert.ok(invalid.error);
+  });
+  it('rejects malformed frames, old methods, invalid negotiation and undeclared invocations', () => {
+    const frames = run(['{', null, { jsonrpc: '1.0', id: 1 }, invoke('detect-libraries'), init({ protocolVersion: 2 }), init({ pluginId: 'wrong' }), init(), init(), invoke('missing'), invoke('detect-libraries', {}, { invocationId: '' }), invoke('detect-libraries', {}, { operationKey: '' }), { jsonrpc: '2.0', id: 2, method: 'executeAction' }, invoke('discover', { input: { 'selected-libraries': { paths: [] } } }), invoke('discover', { input: { 'selected-libraries': { paths: [''] } } }), invoke('discover', { input: { 'selected-libraries': { paths: 'bad' } } })]);
+    assert.equal(frames.filter(frame => frame.result).length, 1);
+    assert.ok(frames.filter(frame => frame.error).length >= 13);
   });
 });
-
-function hostHttpResponse(sequence, body) {
-  return {
-    jsonrpc: "2.0",
-    id: `host-${sequence}`,
-    result: {
-      payload: {
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify(body),
-        headers: {},
-      },
-    },
-  };
-}
-
-function fakeSteamToken(steamId) {
-  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" }), "utf8").toString("base64url");
-  const payload = Buffer.from(JSON.stringify({ sub: steamId, exp: 1893456000 }), "utf8").toString("base64url");
-  return `${header}.${payload}.signature`;
-}
-
-function executeRuntime({ id, params }, extraEnv = {}, options = {}) {
-  const request = JSON.stringify({
-    jsonrpc: "2.0",
-    id,
-    method: "executeAction",
-    params: {
-      pluginId: "community.steam_import_node",
-      hostApis: [
-        "imports.acceptLibraries",
-        "imports.acceptCandidates",
-        "accounts.acceptCandidates",
-        "accounts.acceptStatus",
-        "launch.acceptResolution",
-        "launch.acceptRequest",
-        "tools.requestReviewedCommand",
-        "http.fetchAllowed",
-      ],
-      ...params,
-    },
-  });
-
-  const result = spawnSync(process.execPath, [runtimeEntry], {
-    cwd: path.dirname(runtimeEntry),
-    input: `${[request, ...(options.hostResponses ?? []).map(JSON.stringify)].join("\n")}\n`,
-    env: {
-      ...process.env,
-      ...extraEnv,
-      STEAM_ROOT: fixtureSteamRoot,
-    },
-  });
-
-  assert.equal(result.status, 0, result.stderr.toString("utf8"));
-  const stdout = result.stdout.toString("utf8").trim();
-  assert.ok(stdout.startsWith("{"), `runtime stdout must start with JSON: ${stdout}`);
-  assert.ok(stdout.endsWith("}"), `runtime stdout must end with JSON: ${stdout}`);
-  const messages = stdout.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
-  const hostCalls = messages.filter((message) => message.method === "host.call");
-  if (options.expectedHostCalls !== undefined) {
-    assert.equal(hostCalls.length, options.expectedHostCalls);
-    if (options.expectedHostApis) {
-      assert.deepEqual(hostCalls.map((message) => message.params.apiId), options.expectedHostApis);
-    }
-  }
-  options.assertHostCalls?.(hostCalls);
-  const response = messages.at(-1);
-  assert.equal(response.jsonrpc, "2.0");
-  assert.equal(response.id, id);
-  if (options.expectResult !== false) {
-    assert.ok(response.result, `runtime returned error: ${stdout}`);
-  }
-  return response;
-}

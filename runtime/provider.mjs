@@ -1,108 +1,57 @@
-import { appendFileSync } from "node:fs";
 import { createInterface } from "node:readline";
-import { ACCOUNT_PROVIDER_ID, handleAction } from "../src/jsonrpc/handleAction.mjs";
-import { createHostFetch } from "../src/jsonrpc/hostFetch.mjs";
-import { errorResponse } from "../src/jsonrpc/responses.mjs";
-import { markSteamLoginRequired } from "../src/steam/session.mjs";
+import { readFileSync } from "node:fs";
+import { handleAction } from "../src/jsonrpc/handleAction.mjs";
 
-function log(message) {
-  const logPath = process.env.STEAM_IMPORT_PLUGIN_LOG;
-  if (!logPath) {
-    return;
-  }
+const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
+const actions = new Map(manifest.actions.map((action) => [action.id, action]));
+const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+let initialized = false;
+
+function send(frame) {
+  const line = JSON.stringify({ jsonrpc: "2.0", ...frame }) + "\n";
+  if (Buffer.byteLength(line) > 1048576) {
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: frame.id, error: { code: -32000, message: "Steam result exceeds the 1 MiB frame limit; select fewer libraries." } }) + "\n");
+  } else process.stdout.write(line);
+}
+
+// Initialization and action.invoke share one process. Results are direct domain data.
+for await (const line of lines) {
+  let request;
   try {
-    appendFileSync(logPath, `[provider.mjs] ${message}\n`, "utf8");
+    if (Buffer.byteLength(line) >= 1048576) throw new Error("Frame exceeds limit");
+    request = JSON.parse(line);
   } catch {
-    // Logging must never corrupt the JSON-RPC stdout contract.
+    send({ id: null, error: { code: -32700, message: "Invalid JSON-RPC frame" } });
+    continue;
   }
-}
-
-let requestId = null;
-let hostCallSequence = 0;
-const lines = createInterface({ input: process.stdin, crlfDelay: Infinity })[Symbol.asyncIterator]();
-
-async function main() {
-  log(`node_version=${process.version}`);
-  log(`cwd=${process.cwd()}`);
-  const input = await readRuntimeLine();
-  log(`stdin_bytes=${Buffer.byteLength(input, "utf8")}`);
-  const request = JSON.parse(input);
-  requestId = request.id ?? null;
-  log(`request_id=${request.id ?? ""}`);
-  log(`method=${request.method ?? ""}`);
-  log(`action_id=${request.params?.actionId ?? ""}`);
-  const output = await executeAction(request);
-  log(`response_kind=${output.result ? "result" : "error"}`);
-  log(`host_api=${output.result?.hostApi ?? ""}`);
-  log(`error_message=${output.error?.message ?? ""}`);
-  return output;
-}
-
-async function executeAction(request) {
-  const originalPayload = request.params?.payload ?? {};
-  const context = { fetchImpl: createHostFetch(hostCall) };
-  const output = await handleAction(request.id, request.params, context);
-  if (output.result?.hostApi !== "tools.requestReviewedCommand") {
-    return output;
-  }
-  let hostPayload;
-  try {
-    hostPayload = await hostCall(output.result.hostApi, output.result.payload);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    markSteamLoginRequired();
-    return errorResponse(request.id, message, {
-      messageKey: "error.providerLoginRequired",
-      messageParams: { providerId: ACCOUNT_PROVIDER_ID },
+  const id = request?.id ?? null;
+  const params = request?.params ?? {};
+  if (request?.jsonrpc !== "2.0" || !(typeof id === "string" || Number.isSafeInteger(id)) || "result" in request || "error" in request) {
+    send({ id, error: { code: -32600, message: "Invalid JSON-RPC request" } });
+  } else if (request.method === "plugin.initialize") {
+    if (initialized || params.protocolVersion !== 1 || params.pluginId !== manifest.id) {
+      send({ id, error: { code: -32602, message: "Invalid plugin initialization" } });
+    } else {
+      initialized = true;
+      send({ id, result: { protocolVersion: 1, pluginId: manifest.id, actions: [...actions.keys()] } });
+    }
+  } else if (request.method === "action.invoke") {
+    if (!initialized || !actions.has(params.action) || typeof params.invocationId !== "string" || !params.invocationId || typeof params.operationKey !== "string" || !params.operationKey) {
+      send({ id, error: { code: -32602, message: "Invalid plugin invocation" } });
+      continue;
+    }
+    const input = params.input ?? {};
+    const selected = input.input?.["selected-libraries"]?.paths;
+    if (selected !== undefined && (!Array.isArray(selected) || !selected.length || selected.some((path) => typeof path !== "string" || !path.trim()))) {
+      send({ id, error: { code: -32602, message: "Selected Steam library paths must be nonempty strings" } });
+      continue;
+    }
+    const response = await handleAction(id, {
+      actionId: params.action === "discover" ? "read-candidates" : params.action,
+      payload: selected ? { ...input, libraries: selected } : input,
     });
+    send(response.error ? { id, error: response.error } : { id, result: response.result.payload });
+  } else {
+    send({ id, error: { code: -32601, message: "Unsupported method; plugin requires json-rpc/1" } });
   }
-  return handleAction(request.id, {
-    ...request.params,
-    payload: {
-      ...originalPayload,
-      originalPayload,
-      runtimeHostResult: {
-        step: 1,
-        hostApi: output.result.hostApi,
-        payload: hostPayload,
-      },
-    },
-  }, context);
-}
-
-try {
-  process.stdout.write(`${JSON.stringify(await main())}\n`);
-} catch (error) {
-  const message = error instanceof Error ? error.message : String(error);
-  log(`fatal_error=${message}`);
-  if (error instanceof Error && error.stack) {
-    log(`fatal_stack=${error.stack.replace(/\r?\n/g, " | ")}`);
-  }
-  process.stdout.write(`${JSON.stringify(errorResponse(requestId, message))}\n`);
-}
-
-async function hostCall(apiId, payload) {
-  const id = `host-${++hostCallSequence}`;
-  process.stdout.write(`${JSON.stringify({
-    jsonrpc: "2.0",
-    id,
-    method: "host.call",
-    params: { apiId, payload },
-  })}\n`);
-  const response = JSON.parse(await readRuntimeLine());
-  if (response.id !== id) {
-    throw new Error(`host response id did not match ${id}.`);
-  }
-  if (response.error) {
-    throw new Error(response.error.message ?? `${apiId} failed.`);
-  }
-  return response.result?.payload;
-}
-
-async function readRuntimeLine() {
-  const next = await lines.next();
-  if (next.done || !String(next.value).trim()) {
-    throw new Error("runtime stdin closed before a JSON-RPC message was received.");
-  }
-  return String(next.value).trim();
 }

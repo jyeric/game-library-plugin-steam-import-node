@@ -3,9 +3,9 @@ import { clearSteamLoginState } from "./session.mjs";
 import { steamBannerArtwork } from "./artwork.mjs";
 
 export const PLUGIN_ID = "community.steam_import_node";
-export const IMPORT_PROVIDER_ID = `${PLUGIN_ID}:import`;
-export const ACCOUNT_PROVIDER_ID = `${PLUGIN_ID}:account`;
-export const LAUNCH_PROVIDER_ID = `${PLUGIN_ID}:launch`;
+export const IMPORT_PROVIDER_ID = `${PLUGIN_ID}.import`;
+export const ACCOUNT_PROVIDER_ID = `${PLUGIN_ID}.account`;
+export const LAUNCH_PROVIDER_ID = `${PLUGIN_ID}.launch`;
 
 const STEAM_API_BASE = "https://api.steampowered.com";
 const REQUEST_TIMEOUT_MS = 30000;
@@ -208,7 +208,7 @@ export function steamAccountGameToImportCandidate(game) {
     title,
     source: "steam",
     path: installUri,
-    executable: installUri,
+    executable: null,
     description: shared
       ? "Steam family-shared library game detected through a logged-in Steam web session."
       : "Owned Steam account-library game detected through a logged-in Steam web session.",

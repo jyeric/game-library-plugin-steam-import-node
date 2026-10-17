@@ -1,185 +1,106 @@
 {
+  "schemaVersion": 1,
   "id": "community.steam_import_node",
   "name": "Steam Import Node Provider",
-  "version": "0.2.10",
-  "author": "Game Library Client Community",
-  "description": "JSON-RPC provider that scans installed Steam libraries, imports logged-in Steam account and family-shared games, and launches through steam:// URLs.",
+  "version": "0.3.0",
+  "description": "Import installed Steam games and owned/family-shared account games, sign in with a dedicated browser profile, and launch Steam games.",
   "logoPath": "logo.svg",
-  "entryKind": "json-rpc",
-  "runtimeEntry": "runtime/provider.mjs",
-  "permissions": [
-    "games-read",
-    "launch-url",
-    "launch-process",
-    "http-allowed-domains",
-    "http-cookie-session"
-  ],
-  "allowedPaths": [
-    "<PLUGIN_INSTALL_ROOT>",
-    "<PLUGIN_DATA_DIR>"
-  ],
-  "allowedDomains": [
-    "api.steampowered.com",
-    "login.steampowered.com",
-    "store.steampowered.com",
-    "steamcommunity.com"
-  ],
-  "dependencies": {
-    "runnerVersion": "json-rpc-stdio-v2",
-    "runtimes": [
-      {
-        "kind": "node",
-        "versionRequirement": ">=20 <25",
-        "placeholderBindings": [
-          {
-            "placeholder": "<NODE_EXE>",
-            "value": "executable-path"
-          }
-        ],
-        "install": {
-          "url": "https://nodejs.org/dist/v22.23.1/node-v22.23.1-win-x64.zip",
-          "version": "22.23.1",
-          "executableRelPath": "node-v22.23.1-win-x64/node.exe",
-          "binDirs": [
-            "node-v22.23.1-win-x64"
-          ],
-          "sha256": "7df0bc9375723f4a86b3aa1b7cc73342423d9677a8df4538aca31a049e309c29",
-          "maxBytes": 120000000
-        }
-      }
-    ]
+  "protocol": "json-rpc/1",
+  "runtime": {
+    "kind": "node",
+    "version": "22.22.0"
   },
-  "hostApis": [
-    "imports.acceptLibraries",
-    "imports.acceptCandidates",
-    "accounts.acceptCandidates",
-    "accounts.acceptStatus",
-    "launch.acceptResolution",
-    "launch.acceptRequest",
-    "tools.requestReviewedCommand",
-    "http.fetchAllowed"
-  ],
-  "externalTools": [
+  "entry": "runtime/provider.mjs",
+  "capabilities": [
     {
-      "id": "steam-auth",
-      "name": "Steam browser login",
-      "executablePath": "<NODE_EXE>",
-      "workingDirectory": "<PLUGIN_INSTALL_ROOT>",
-      "commandPreview": [
-        "src/auth/steam-auth.mjs",
-        "auth",
-        "--data-dir",
-        "<PLUGIN_DATA_DIR>"
-      ],
-      "reviewedCommands": [
-        {
-          "id": "auth",
-          "argsTemplate": [
-            "src/auth/steam-auth.mjs",
-            "auth",
-            "--data-dir",
-            "<PLUGIN_DATA_DIR>"
-          ],
-          "description": "Open a Steam browser login window and save Steam store cookies so this plugin can refresh the store webapi_token without a Steam Web API key."
-        }
-      ]
-    }
-  ],
-  "runtimeActions": [
-    {
-      "id": "login",
-      "name": "Log in to Steam",
-      "hostApi": "accounts.acceptStatus",
-      "intermediateHostApis": [
-        "tools.requestReviewedCommand"
-      ]
+      "providerId": "community.steam_import_node.import",
+      "capability": "import.library",
+      "action": "discover"
     },
     {
-      "id": "account-status",
-      "name": "Read Steam account login status",
-      "hostApi": "accounts.acceptStatus"
+      "providerId": "community.steam_import_node.import",
+      "capability": "imports.detectLibraries",
+      "action": "detect-libraries"
+    },
+    {
+      "providerId": "community.steam_import_node.import",
+      "capability": "imports.readCandidates",
+      "action": "read-candidates"
+    },
+    {
+      "providerId": "community.steam_import_node.account",
+      "capability": "accounts.readCandidates",
+      "action": "read-account-candidates"
+    },
+    {
+      "providerId": "community.steam_import_node.account",
+      "capability": "accounts.status",
+      "action": "account-status"
+    },
+    {
+      "providerId": "community.steam_import_node.account",
+      "capability": "accounts.login",
+      "action": "login"
+    },
+    {
+      "providerId": "community.steam_import_node.launch",
+      "capability": "launch.resolveProvider",
+      "action": "resolve-launch"
+    },
+    {
+      "providerId": "community.steam_import_node.launch",
+      "capability": "launch.requestProvider",
+      "action": "request-launch"
+    }
+  ],
+  "actions": [
+    {
+      "id": "discover",
+      "inputSchema": "import.input/1",
+      "resultSchema": "import.result/1",
+      "hostMethods": []
     },
     {
       "id": "detect-libraries",
-      "name": "Detect Steam libraries",
-      "hostApi": "imports.acceptLibraries"
+      "inputSchema": "imports.detectLibraries/1",
+      "resultSchema": "imports.detectLibraries/1",
+      "hostMethods": []
     },
     {
       "id": "read-candidates",
-      "name": "Read installed Steam import candidates",
-      "hostApi": "imports.acceptCandidates"
+      "inputSchema": "imports.readCandidates/1",
+      "resultSchema": "imports.readCandidates/1",
+      "hostMethods": []
     },
     {
       "id": "read-account-candidates",
-      "name": "Read Steam account and family-shared games",
-      "hostApi": "accounts.acceptCandidates",
-      "intermediateHostApis": [
-        "http.fetchAllowed"
-      ]
+      "inputSchema": "accounts.readCandidates/1",
+      "resultSchema": "accounts.readCandidates/1",
+      "hostMethods": []
+    },
+    {
+      "id": "account-status",
+      "inputSchema": "accounts.status/1",
+      "resultSchema": "accounts.status/1",
+      "hostMethods": []
+    },
+    {
+      "id": "login",
+      "inputSchema": "accounts.login/1",
+      "resultSchema": "accounts.login/1",
+      "hostMethods": []
     },
     {
       "id": "resolve-launch",
-      "name": "Resolve Steam URL launch",
-      "hostApi": "launch.acceptResolution"
+      "inputSchema": "launch.resolveProvider/1",
+      "resultSchema": "launch.resolveProvider/1",
+      "hostMethods": []
     },
     {
       "id": "request-launch",
-      "name": "Request Steam URL launch",
-      "hostApi": "launch.acceptRequest"
-    }
-  ],
-  "providers": [
-    {
-      "id": "community.steam_import_node:import",
-      "name": "Steam Installed Games",
-      "familyId": "steam",
-      "source": "plugin",
-      "status": "enabled",
-      "capabilities": [
-        "import"
-      ],
-      "permissions": [
-        "games-read"
-      ],
-      "runtimeActions": {
-        "imports.detectLibraries": "detect-libraries",
-        "imports.readCandidates": "read-candidates"
-      }
-    },
-    {
-      "id": "community.steam_import_node:account",
-      "name": "Steam Account and Family Library",
-      "familyId": "steam",
-      "source": "plugin",
-      "status": "enabled",
-      "capabilities": [
-        "account-import"
-      ],
-      "permissions": [
-        "games-read"
-      ],
-      "runtimeActions": {
-        "accounts.readCandidates": "read-account-candidates",
-        "accounts.status": "account-status",
-        "accounts.login": "login"
-      }
-    },
-    {
-      "id": "community.steam_import_node:launch",
-      "name": "Steam URL Launch",
-      "familyId": "steam",
-      "source": "plugin",
-      "status": "enabled",
-      "capabilities": [
-        "launch"
-      ],
-      "permissions": [
-        "launch-url"
-      ],
-      "runtimeActions": {
-        "launch.resolveProvider": "resolve-launch",
-        "launch.requestProvider": "request-launch"
-      }
+      "inputSchema": "launch.requestProvider/1",
+      "resultSchema": "launch.requestProvider/1",
+      "hostMethods": []
     }
   ]
 }
