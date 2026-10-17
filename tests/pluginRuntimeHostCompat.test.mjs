@@ -83,7 +83,7 @@ describe('json-rpc/1 host compatibility', () => {
     assert.deepEqual(frames[1].result.candidates.map(c => c.externalIds.steam), ['10', '30']);
     assert.ok(existsSync(tokenCacheFilePath(dataDir)));
   });
-  it('starts login with the managed interpreter and persistent root', async () => {
+  it('starts login with the selected interpreter and persistent root', async () => {
     let args;
     await launchSteamLogin((...values) => {
       args = values;

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { sessionFilePath } from "../steam/session.mjs";
 import { findBrowserExecutable } from "./browserExecutable.mjs";
 
-/** Start the login helper with the same managed Node and persistent data root. */
+/** Start the login helper with the same selected Node and persistent data root. */
 export function launchSteamLogin(spawnProcess = spawn, browserPath = findBrowserExecutable()) {
   return new Promise((resolve, reject) => {
     if (!browserPath) throw new Error("Microsoft Edge or Chrome was not found. Install Edge/Chrome before signing in to Steam.");

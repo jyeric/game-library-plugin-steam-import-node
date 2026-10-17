@@ -2,13 +2,15 @@
   "schemaVersion": 1,
   "id": "community.steam_import_node",
   "name": "Steam Import Node Provider",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Import installed Steam games and owned/family-shared account games, sign in with a dedicated browser profile, and launch Steam games.",
   "logoPath": "logo.svg",
   "protocol": "json-rpc/1",
   "runtime": {
     "kind": "node",
-    "version": "22.22.0"
+    "source": "system-first",
+    "version": ">=22.22.0 <25.0.0",
+    "downloadVersion": "22.22.0"
   },
   "entry": "runtime/provider.mjs",
   "capabilities": [

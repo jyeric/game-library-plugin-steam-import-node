@@ -1,20 +1,33 @@
 # Steam Import Node Provider
 
-Version 0.3.1 uses the current client's `json-rpc/1` protocol. It imports installed Steam games, owned account games and family-shared games, and returns Steam launch URLs. The plugin has no npm dependencies and ships a visible `logo.svg`.
+Version 0.4.0 uses the current client's `json-rpc/1` protocol. It imports installed Steam games, owned account games and family-shared games, and returns Steam launch URLs. The plugin has no npm dependencies and ships a visible `logo.svg`.
 
 ## Build and install
 
-Run `npm test`, then `npm run package`. Install the resulting `game-library-plugin-steam-import-node.zip` from the client's Plugins page, review its code and approve its digest separately. Install the managed Node **22.22.0** runtime in client settings if missing; the host owns its pinned distribution and verification. Node is not bundled in the plugin ZIP.
+Run `npm test`, then `npm run package`. Install the resulting `game-library-plugin-steam-import-node.zip` from the client's Plugins page, review its code and approve its digest separately. The matching client first probes Node on the system PATH and accepts **>=22.22.0 <25.0.0**, including Node **24.18.0**. If no compatible system or managed version exists, clicking account sign-in installs the declared managed fallback **22.22.0** from the client-reviewed distribution catalog. Node is not bundled in the plugin ZIP. The host verifies the executable version; the login helper reuses that same executable.
 
 A 0.2.x package uses retired `json-rpc-stdio-v2` declarations and cannot be installed in the current client. Rebuild from 0.3.0; changing only the manifest is insufficient because initialization, invocation and results all changed.
 
-The manifest explicitly groups all three providers under the client's existing `steam` family. Version 0.3.1 requires the matching client update that supports `providers: [{id, name, familyId}]` in json-rpc/1 manifests. These entries are display metadata only; executable routing remains declared by `capabilities` and `actions`.
+The manifest explicitly groups all three providers under the client's existing `steam` family. Version 0.4.0 requires the matching client update supporting runtime `source: "system-first"`, version ranges and `downloadVersion`, as well as `providers: [{id, name, familyId}]` in json-rpc/1 manifests. These entries are display metadata only; executable routing remains declared by `capabilities` and `actions`.
+
+Runtime configuration is declared in both manifests:
+
+```json
+"runtime": {
+  "kind": "node",
+  "source": "system-first",
+  "version": ">=22.22.0 <25.0.0",
+  "downloadVersion": "22.22.0"
+}
+```
+
+The client tries compatible PATH executables in PATH order, then a compatible managed installation; only an explicit preparation action downloads the fallback. Existing exact managed-only plugins retain their behavior. Runtime or login failures appear in the account row and can be retried. Updating this manifest changes its approved digest, so review and approve the updated package again.
 
 ## Import and sign in
 
-The Import page exposes the plugin's installed-game and account connectors after code approval and runtime installation. Select the plugin connector explicitly. Installed-game discovery accepts either the detected Windows Steam libraries or the selected library roots supplied by the client. Register/bind `import.library` when requested by the client; installation does not select an active importer automatically.
+The Import page exposes the plugin's installed-game and account connectors after code approval and compatible runtime resolution. Select the plugin connector explicitly. Installed-game discovery accepts either the detected Windows Steam libraries or the selected library roots supplied by the client. Register/bind `import.library` when requested by the client; installation does not select an active importer automatically.
 
-Use the account connector's sign-in action to open a dedicated Edge/Chrome Steam login window. The approved plugin starts its own login helper with the same managed Node executable. Steam cookies and refreshed access tokens remain under the current user's `~/.game-library-steam`, outside the approved code directory. Login must complete before account import. No Steam Web API key is required. Account candidates do not create launch options for uninstalled games; install those games through Steam first. Installed-game candidates supply explicit Steam URL launch options and their installation directory for tracking.
+Use the account connector's sign-in action to open a dedicated Edge/Chrome Steam login window. The approved plugin starts its own login helper with the same selected Node executable. Steam cookies and refreshed access tokens remain under the current user's `~/.game-library-steam`, outside the approved code directory. Login must complete before account import. No Steam Web API key is required. Account candidates do not create launch options for uninstalled games; install those games through Steam first. Installed-game candidates supply explicit Steam URL launch options and their installation directory for tracking.
 
 The plugin fetches Steam endpoints directly through Node, as permitted for trusted `json-rpc/1` code. The retired `http.fetchAllowed` and reviewed-command callbacks are not used. Client host HTTP proxy settings are not automatically applied to Node fetch. Browser login supports `GAME_LIBRARY_PROXY_SERVER`, `HTTPS_PROXY` or `HTTP_PROXY` when run manually; the current host intentionally clears inherited environment variables.
 

@@ -220,7 +220,7 @@ describe("Steam plugin manifest", () => {
     assert.equal(manifest.logoPath, "logo.svg");
     assert.equal(manifest.schemaVersion, 1);
     assert.equal(manifest.protocol, "json-rpc/1");
-    assert.deepEqual(manifest.runtime, { kind: "node", version: "22.22.0" });
+    assert.deepEqual(manifest.runtime, { kind: "node", source: "system-first", version: ">=22.22.0 <25.0.0", downloadVersion: "22.22.0" });
     assert.equal(manifest.entry, "runtime/provider.mjs");
     assert.equal(manifest.dependencies, undefined);
     assert.equal(manifest.providers.length, 3);
