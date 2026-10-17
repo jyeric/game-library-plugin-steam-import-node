@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "community.steam_import_node",
   "name": "Steam Import Node Provider",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Import installed Steam games and owned/family-shared account games, sign in with a dedicated browser profile, and launch Steam games.",
   "logoPath": "logo.svg",
   "protocol": "json-rpc/1",
@@ -101,6 +101,23 @@
       "inputSchema": "launch.requestProvider/1",
       "resultSchema": "launch.requestProvider/1",
       "hostMethods": []
+    }
+  ],
+  "providers": [
+    {
+      "id": "community.steam_import_node.import",
+      "name": "Steam Installed Games",
+      "familyId": "steam"
+    },
+    {
+      "id": "community.steam_import_node.account",
+      "name": "Steam Account and Family Library",
+      "familyId": "steam"
+    },
+    {
+      "id": "community.steam_import_node.launch",
+      "name": "Steam URL Launch",
+      "familyId": "steam"
     }
   ]
 }

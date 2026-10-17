@@ -223,7 +223,9 @@ describe("Steam plugin manifest", () => {
     assert.deepEqual(manifest.runtime, { kind: "node", version: "22.22.0" });
     assert.equal(manifest.entry, "runtime/provider.mjs");
     assert.equal(manifest.dependencies, undefined);
-    assert.equal(manifest.providers, undefined);
+    assert.equal(manifest.providers.length, 3);
+    assert.ok(manifest.providers.every(provider => provider.familyId === "steam" && provider.name.trim()));
+    assert.deepEqual(new Set(manifest.providers.map(provider => provider.id)), new Set(manifest.capabilities.map(capability => capability.providerId)));
     assert.equal(manifest.externalTools, undefined);
     for (const capability of manifest.capabilities) {
       assert.match(capability.providerId, /^[a-zA-Z0-9._-]+$/);

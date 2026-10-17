@@ -1,12 +1,14 @@
 # Steam Import Node Provider
 
-Version 0.3.0 uses the current client's `json-rpc/1` protocol. It imports installed Steam games, owned account games and family-shared games, and returns Steam launch URLs. The plugin has no npm dependencies and ships a visible `logo.svg`.
+Version 0.3.1 uses the current client's `json-rpc/1` protocol. It imports installed Steam games, owned account games and family-shared games, and returns Steam launch URLs. The plugin has no npm dependencies and ships a visible `logo.svg`.
 
 ## Build and install
 
 Run `npm test`, then `npm run package`. Install the resulting `game-library-plugin-steam-import-node.zip` from the client's Plugins page, review its code and approve its digest separately. Install the managed Node **22.22.0** runtime in client settings if missing; the host owns its pinned distribution and verification. Node is not bundled in the plugin ZIP.
 
 A 0.2.x package uses retired `json-rpc-stdio-v2` declarations and cannot be installed in the current client. Rebuild from 0.3.0; changing only the manifest is insufficient because initialization, invocation and results all changed.
+
+The manifest explicitly groups all three providers under the client's existing `steam` family. Version 0.3.1 requires the matching client update that supports `providers: [{id, name, familyId}]` in json-rpc/1 manifests. These entries are display metadata only; executable routing remains declared by `capabilities` and `actions`.
 
 ## Import and sign in
 
